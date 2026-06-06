@@ -858,3 +858,21 @@ tbody tr:last-child td { border-bottom: none; }
     font-size: 11px;
     color: var(--text-muted);
 }
+
+/* ═══ AGENT MANAGEMENT ═══ */
+.avatar-option {
+    font-size: 24px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 2px solid transparent;
+    transition: all 0.2s;
+    line-height: 1;
+}
+.avatar-option:hover {
+    background: var(--bg-hover);
+}
+.avatar-option.selected {
+    border-color: var(--accent-blue);
+    background: rgba(88,166,255,0.1);
+}

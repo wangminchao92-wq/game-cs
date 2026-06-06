@@ -856,8 +856,10 @@ async function loadTeam() {
     try {
         const data = await apiGet('/api/agents');
         const list = document.getElementById('team-list');
+        const isSuperAdmin = currentUser && currentUser.role === 'super_admin';
         list.innerHTML = data.agents.map(a =>
-            `<div class="team-card">
+            `<div class="team-card" style="position:relative">
+                ${isSuperAdmin ? `<button onclick="deleteAgent(${a.id},'${escapeHtml(a.name)}')" style="position:absolute;top:8px;right:8px;background:none;border:1px solid var(--accent-red);color:var(--accent-red);border-radius:4px;cursor:pointer;font-size:12px;padding:2px 8px;opacity:0.6;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">✕ 删除</button>` : ''}
                 <div class="avatar">${a.avatar}</div>
                 <div class="name">${escapeHtml(a.name)}</div>
                 <div class="role">
@@ -873,6 +875,65 @@ async function loadTeam() {
         ).join('');
     } catch (e) {
         console.error('Team error:', e);
+    }
+}
+
+// ─── Agent CRUD ───
+
+function showAddAgentForm() {
+    document.getElementById('add-agent-modal').style.display = 'flex';
+    document.getElementById('new-agent-name').value = '';
+    document.getElementById('new-agent-email').value = '';
+    document.getElementById('new-agent-role').value = 'agent';
+    // Reset avatar selection
+    document.querySelectorAll('#avatar-picker .avatar-option').forEach(el => el.classList.remove('selected'));
+    document.querySelector('#avatar-picker .avatar-option:first-child').classList.add('selected');
+}
+
+function closeAddAgentModal() {
+    document.getElementById('add-agent-modal').style.display = 'none';
+}
+
+let selectedAgentAvatar = '👤';
+
+function selectAgentAvatar(el) {
+    document.querySelectorAll('#avatar-picker .avatar-option').forEach(e => e.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedAgentAvatar = el.textContent;
+}
+
+async function submitNewAgent() {
+    const name = document.getElementById('new-agent-name').value.trim();
+    const email = document.getElementById('new-agent-email').value.trim();
+    const role = document.getElementById('new-agent-role').value;
+
+    if (!name) { showToast('请输入姓名', 'error'); return; }
+    if (!email) { showToast('请输入邮箱', 'error'); return; }
+
+    try {
+        const data = await apiPost('/api/agents', {
+            name, email, role, avatar: selectedAgentAvatar,
+        });
+        showToast('✅ ' + data.message, 'success');
+        closeAddAgentModal();
+        loadTeam();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+    }
+}
+
+async function deleteAgent(id, name) {
+    if (!confirm(`确认删除客服 "${name}"？\n该客服负责的工单将解除指派。`)) return;
+    try {
+        const data = await apiDelete('/api/agents/' + id);
+        showToast('✅ ' + data.message, 'success');
+        loadTeam();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
     }
 }
 

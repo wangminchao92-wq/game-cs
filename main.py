@@ -811,6 +811,48 @@ def list_agents(db: Session = Depends(get_db)):
     return {"agents": result}
 
 
+@app.post("/api/agents")
+def create_agent(data: dict, db: Session = Depends(get_db)):
+    """新增客服人员"""
+    name = data.get("name", "").strip()
+    email = data.get("email", "").strip()
+    role = data.get("role", "agent")
+    avatar = data.get("avatar", "👤")
+
+    if not name or not email:
+        raise HTTPException(status_code=400, detail="姓名和邮箱不能为空")
+
+    existing = db.query(Agent).filter(Agent.email == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该邮箱已被使用")
+
+    agent = Agent(name=name, email=email, role=role, avatar=avatar)
+    db.add(agent)
+    db.commit()
+    db.refresh(agent)
+    return {"status": "ok", "message": f"客服 '{name}' 已添加", "agent": {
+        "id": agent.id, "name": agent.name, "email": agent.email,
+        "role": agent.role, "avatar": agent.avatar, "is_active": agent.is_active,
+        "open_tickets": 0, "resolved_tickets": 0,
+    }}
+
+
+@app.delete("/api/agents/{agent_id}")
+def delete_agent(agent_id: int, db: Session = Depends(get_db)):
+    """删除客服人员（需先解除关联工单）"""
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="客服不存在")
+
+    # 解除该客服的工单指派
+    db.query(Ticket).filter(Ticket.assigned_to == agent_id).update(
+        {"assigned_to": None}
+    )
+    db.delete(agent)
+    db.commit()
+    return {"status": "ok", "message": f"客服 '{agent.name}' 已删除"}
+
+
 # -- Knowledge Base --
 
 @app.get("/api/kb")
