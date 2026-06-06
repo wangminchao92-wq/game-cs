@@ -57,6 +57,15 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class SystemSetting(Base):
+    """系统设置（键值对）"""
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, index=True, nullable=False)
+    value = Column(Text, default="")
+
+
 class Player(Base):
     __tablename__ = "players"
 

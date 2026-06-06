@@ -4,6 +4,7 @@ import random
 import string
 import asyncio
 import json
+from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -13,7 +14,7 @@ from sqlalchemy import func, extract, desc
 
 from database import init_db, get_db, SessionLocal
 from models import (
-    Base, Agent, Player, User, Ticket, TicketMessage, KnowledgeArticle, ApiKey,
+    Base, Agent, Player, User, SystemSetting, Ticket, TicketMessage, KnowledgeArticle, ApiKey,
     TicketPriority, TicketStatus, TicketCategory,
 )
 from translation_service import (
@@ -1071,6 +1072,111 @@ def ai_auto_reply(ticket_id: str, data: dict, db: Session = Depends(get_db)):
     }
 
 
+# ─── Auto-Reply Config & Automated Reply ──────────────────────────
+
+
+def get_setting(db: Session, key: str, default: str = "") -> str:
+    """获取系统设置值"""
+    s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    return s.value if s else default
+
+
+def set_setting(db: Session, key: str, value: str):
+    """设置系统设置值"""
+    s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    if s:
+        s.value = value
+    else:
+        s = SystemSetting(key=key, value=value)
+        db.add(s)
+    db.commit()
+
+
+def _is_within_auto_reply_hours(db: Session) -> bool:
+    """检查当前时间是否在自动回复时段内"""
+    enabled = get_setting(db, "auto_reply_enabled", "false")
+    if enabled != "true":
+        return False
+
+    now = datetime.datetime.utcnow().hour
+    start = int(get_setting(db, "auto_reply_start_hour", "22"))
+    end = int(get_setting(db, "auto_reply_end_hour", "8"))
+
+    if start <= end:
+        # Same-day range, e.g. 9:00-18:00
+        return start <= now < end
+    else:
+        # Cross-midnight range, e.g. 22:00-08:00
+        return now >= start or now < end
+
+
+@app.get("/api/settings/auto-reply")
+def get_auto_reply_config(db: Session = Depends(get_db)):
+    """获取自动回复配置"""
+    return {
+        "enabled": get_setting(db, "auto_reply_enabled", "false"),
+        "start_hour": int(get_setting(db, "auto_reply_start_hour", "22")),
+        "end_hour": int(get_setting(db, "auto_reply_end_hour", "8")),
+        "now_hour": datetime.datetime.utcnow().hour,
+        "in_window": _is_within_auto_reply_hours(db),
+    }
+
+
+@app.post("/api/settings/auto-reply")
+def set_auto_reply_config(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """设置自动回复配置（超级管理员）"""
+    set_setting(db, "auto_reply_enabled", str(data.get("enabled", False)).lower())
+    set_setting(db, "auto_reply_start_hour", str(int(data.get("start_hour", 22))))
+    set_setting(db, "auto_reply_end_hour", str(int(data.get("end_hour", 8))))
+    return {
+        "status": "ok",
+        "message": "自动回复配置已保存",
+        "in_window": _is_within_auto_reply_hours(db),
+    }
+
+
+def _reply_to_ticket(ticket: Ticket, player_lang: str, db: Session) -> Optional[dict]:
+    """生成 AI 回复并发送到工单（不依赖 WebSocket）"""
+    history = []
+    for m in ticket.messages[:10]:
+        lang = m.original_language or player_lang
+        history.append({"sender": m.sender_name, "content": m.content, "language": lang})
+
+    suggestion = suggest_reply(
+        ticket_title=ticket.title,
+        ticket_description=ticket.description,
+        conversation_history=history,
+        player_language=player_lang,
+        agent_language="zh-CN",
+    )
+    reply_zh = suggestion.get("reply_zh", "")
+    if not reply_zh:
+        return None
+
+    translated = None
+    if player_lang != "zh-CN":
+        translated = translate(reply_zh, "zh-CN", player_lang)
+
+    msg = TicketMessage(
+        ticket_id=ticket.id,
+        sender_type="agent",
+        sender_name="AI自动回复",
+        content=reply_zh,
+        original_language="zh-CN",
+        translated_content=translated,
+        is_ai_suggested=True,
+    )
+    db.add(msg)
+    ticket.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    return {
+        "reply_zh": reply_zh,
+        "reply_translated": translated,
+        "player_lang": player_lang,
+    }
+
+
 # -- Analytics --
 
 @app.get("/api/analytics")
@@ -1496,6 +1602,48 @@ async def websocket_chat(ws: WebSocket, ticket_id: str):
                                     "confidence": suggestion.get("confidence", 0),
                                     "suggested_action": suggestion.get("suggested_action", "send_message"),
                                 })
+
+                                # ─── Auto-reply during off-hours ───
+                                if _is_within_auto_reply_hours(db):
+                                    reply_zh = suggestion["reply_zh"]
+                                    translated_auto = suggestion.get("reply_translated")
+
+                                    # Save the auto-reply message
+                                    auto_msg = TicketMessage(
+                                        ticket_id=ticket.id,
+                                        sender_type="agent",
+                                        sender_name="AI自动回复",
+                                        content=reply_zh,
+                                        original_language="zh-CN",
+                                        translated_content=translated_auto,
+                                        is_ai_suggested=True,
+                                    )
+                                    db.add(auto_msg)
+                                    ticket.updated_at = datetime.datetime.utcnow()
+                                    db.commit()
+                                    db.refresh(auto_msg)
+
+                                    # Broadcast auto-reply to all
+                                    await manager.send_to_ticket(ticket_id, {
+                                        "type": "message",
+                                        "id": auto_msg.id,
+                                        "sender_type": "agent",
+                                        "sender_name": "AI自动回复",
+                                        "content": reply_zh,
+                                        "translated_content": translated_auto,
+                                        "is_ai_suggested": True,
+                                        "timestamp": auto_msg.created_at.isoformat() if auto_msg.created_at else None,
+                                        "auto_reply": True,
+                                    })
+
+                                    # Notify agents
+                                    await manager.broadcast_to_agents({
+                                        "type": "auto_reply_sent",
+                                        "ticket_id": ticket_id,
+                                        "title": ticket.title,
+                                        "preview": reply_zh[:80],
+                                        "timestamp": auto_msg.created_at.isoformat() if auto_msg.created_at else None,
+                                    })
                         except Exception:
                             pass
     

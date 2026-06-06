@@ -114,6 +114,8 @@ function onAuthSuccess() {
     // Show/hide super_admin nav items
     const navUsers = document.getElementById('nav-users');
     if (navUsers) navUsers.style.display = currentUser && currentUser.role === 'super_admin' ? '' : 'none';
+    const navSettings = document.getElementById('nav-settings');
+    if (navSettings) navSettings.style.display = currentUser && currentUser.role === 'super_admin' ? '' : 'none';
     // Add logout button to topbar if not exists
     if (!document.getElementById('logout-btn')) {
         const right = document.querySelector('.topbar-right');
@@ -1000,6 +1002,7 @@ function switchView(view) {
         knowledge: '📚 知识库', analytics: '📈 数据分析', team: '👨‍👩‍👧‍👦 团队管理',
         livechat: '💬 实时聊天', facebook: '📰 Facebook热点',
         users: '👥 用户管理',
+        settings: '⚙️ 系统设置',
     };
     document.getElementById('view-title').textContent = titles[view] || view;
 
@@ -1012,6 +1015,7 @@ function switchView(view) {
     else if (view === 'livechat') initLiveChat();
     else if (view === 'facebook') initFbNews();
     else if (view === 'users') loadUsers();
+    else if (view === 'settings') loadSettings();
 }
 
 async function initLiveChat() {
@@ -1611,6 +1615,71 @@ async function deleteUser(id, username) {
         let msg = e.message;
         try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
         showToast('❌ ' + msg, 'error');
+    }
+}
+
+// ═══ SETTINGS — Auto Reply ═══════════════════════════════════════
+
+async function loadSettings() {
+    try {
+        const data = await apiGet('/api/settings/auto-reply');
+        document.getElementById('auto-reply-toggle').checked = data.enabled === 'true';
+        document.getElementById('auto-reply-start').value = String(data.start_hour);
+        document.getElementById('auto-reply-end').value = String(data.end_hour);
+        updateAutoReplyStatus(data);
+    } catch (e) {
+        console.error('Load settings error:', e);
+    }
+}
+
+function updateAutoReplyStatus(data) {
+    const badge = document.getElementById('auto-reply-window-badge');
+    if (data.enabled === 'true' && data.in_window) {
+        badge.style.display = 'block';
+        badge.style.background = 'rgba(63,185,80,0.15)';
+        badge.style.border = '1px solid var(--accent-green)';
+        badge.style.color = 'var(--accent-green)';
+        badge.textContent = '🟢 当前在自动回复时段内，AI将自动回复玩家消息';
+    } else if (data.enabled === 'true') {
+        badge.style.display = 'block';
+        badge.style.background = 'rgba(210,153,34,0.15)';
+        badge.style.border = '1px solid var(--accent-orange)';
+        badge.style.color = 'var(--accent-orange)';
+        badge.textContent = '🟡 自动回复已启用，但当前不在设定时段内';
+    } else {
+        badge.style.display = 'none';
+    }
+    document.getElementById('auto-reply-status').textContent = '';
+}
+
+function onAutoReplyToggle() {
+    const enabled = document.getElementById('auto-reply-toggle').checked;
+    document.getElementById('auto-reply-status').textContent = enabled ? '开关已切换，点击保存生效' : '';
+}
+
+async function saveAutoReplyConfig() {
+    const enabled = document.getElementById('auto-reply-toggle').checked;
+    const startHour = parseInt(document.getElementById('auto-reply-start').value);
+    const endHour = parseInt(document.getElementById('auto-reply-end').value);
+    const statusEl = document.getElementById('auto-reply-status');
+    statusEl.textContent = '保存中...';
+
+    try {
+        const data = await apiPost('/api/settings/auto-reply', {
+            enabled: enabled,
+            start_hour: startHour,
+            end_hour: endHour,
+        });
+        showToast('✅ ' + data.message, 'success');
+        updateAutoReplyStatus({
+            enabled: String(enabled),
+            in_window: data.in_window,
+        });
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+        statusEl.textContent = '保存失败';
     }
 }
 

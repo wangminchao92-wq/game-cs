@@ -76,6 +76,10 @@
                     <span class="nav-icon">👥</span>
                     <span>用户管理</span>
                 </div>
+                <div class="nav-item" data-view="settings" onclick="switchView('settings')" id="nav-settings" style="display:none">
+                    <span class="nav-icon">⚙️</span>
+                    <span>系统设置</span>
+                </div>
             </nav>
             <div class="sidebar-footer">
                 <div class="version">南京云霞飞信息技术有限公司 © 2026</div>
@@ -469,6 +473,69 @@
                                 </select>
                             </div>
                             <button class="btn btn-primary" onclick="submitNewUser()" style="width:100%">创建账户</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ SETTINGS (super_admin only) ═══ -->
+                <div id="view-settings" class="view">
+                    <div class="card" style="margin-bottom:16px">
+                        <div class="card-header">
+                            <h3>🤖 AI 自动回复设置</h3>
+                            <div style="font-size:12px;color:var(--text-muted)">在特定时段内，AI自动回复玩家消息</div>
+                        </div>
+                        <div class="card-body">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px;background:var(--bg-hover);border-radius:var(--radius-sm)">
+                                <span style="font-size:14px;font-weight:600">启用自动回复</span>
+                                <label class="toggle-switch" style="margin-left:auto">
+                                    <input type="checkbox" id="auto-reply-toggle" onchange="onAutoReplyToggle()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div id="auto-reply-config" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                                <div>
+                                    <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px">开始时间（UTC）</label>
+                                    <select id="auto-reply-start" class="settings-select">
+                                        <option value="0">00:00</option><option value="1">01:00</option><option value="2">02:00</option>
+                                        <option value="3">03:00</option><option value="4">04:00</option><option value="5">05:00</option>
+                                        <option value="6">06:00</option><option value="7">07:00</option><option value="8">08:00</option>
+                                        <option value="9">09:00</option><option value="10">10:00</option><option value="11">11:00</option>
+                                        <option value="12">12:00</option><option value="13">13:00</option><option value="14">14:00</option>
+                                        <option value="15">15:00</option><option value="16">16:00</option><option value="17">17:00</option>
+                                        <option value="18">18:00</option><option value="19">19:00</option><option value="20">20:00</option>
+                                        <option value="21">21:00</option><option value="22" selected>22:00</option><option value="23">23:00</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px">结束时间（UTC）</label>
+                                    <select id="auto-reply-end" class="settings-select">
+                                        <option value="0">00:00</option><option value="1">01:00</option><option value="2">02:00</option>
+                                        <option value="3">03:00</option><option value="4">04:00</option><option value="5">05:00</option>
+                                        <option value="6">06:00</option><option value="7">07:00</option><option value="8" selected>08:00</option>
+                                        <option value="9">09:00</option><option value="10">10:00</option><option value="11">11:00</option>
+                                        <option value="12">12:00</option><option value="13">13:00</option><option value="14">14:00</option>
+                                        <option value="15">15:00</option><option value="16">16:00</option><option value="17">17:00</option>
+                                        <option value="18">18:00</option><option value="19">19:00</option><option value="20">20:00</option>
+                                        <option value="21">21:00</option><option value="22">22:00</option><option value="23">23:00</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style="margin-top:16px;display:flex;align-items:center;gap:12px">
+                                <button class="btn btn-primary" onclick="saveAutoReplyConfig()">💾 保存设置</button>
+                                <span id="auto-reply-status" style="font-size:13px;color:var(--text-muted)"></span>
+                            </div>
+                            <div id="auto-reply-window-badge" style="margin-top:12px;padding:8px 12px;border-radius:var(--radius-sm);font-size:13px;display:none"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📋 自动回复记录</h3>
+                        </div>
+                        <div class="card-body">
+                            <div style="font-size:13px;color:var(--text-muted);padding:16px 0">
+                                AI自动回复的消息会标记为 <strong>"AI自动回复"</strong> 发送给玩家。<br>
+                                客服上线后可查看自动回复记录并继续人工跟进。
+                            </div>
                         </div>
                     </div>
                 </div>
