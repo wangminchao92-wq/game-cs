@@ -28,6 +28,7 @@ from translation_service import (
     get_language_name, get_language_flag, LANGUAGE_MAP,
 )
 import facebook_news
+import feishu_bot
 from auth import (
     hash_password, verify_password, create_access_token, decode_token,
     get_current_user, require_super_admin, get_user_info,
@@ -75,6 +76,70 @@ def gen_ticket_id():
     ts = datetime.datetime.utcnow().strftime("%Y%m%d")
     suf = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
     return f"CS-{ts}-{suf}"
+
+
+# ─── Auto-Assign Logic ──────────────────────────────────────────────
+
+MAX_OPEN_TICKETS = 5
+AI_ASSIGN_ENABLED_SETTING = "auto_assign_enabled"
+
+
+def _is_auto_assign_enabled(db: Session) -> bool:
+    """检查自动分单开关是否打开"""
+    return get_setting(db, AI_ASSIGN_ENABLED_SETTING, "true") == "true"
+
+
+def _get_agent_open_counts(db: Session) -> list[dict]:
+    """查询每个激活客服的未解决工单数量"""
+    from sqlalchemy import func
+    open_statuses = [TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_PLAYER]
+    counts = db.query(
+        Ticket.assigned_to, func.count(Ticket.id).label("cnt")
+    ).filter(
+        Ticket.status.in_(open_statuses),
+        Ticket.assigned_to.isnot(None),
+    ).group_by(Ticket.assigned_to).all()
+    count_map = {r[0]: r[1] for r in counts}
+
+    # 获取所有激活的客服
+    agents = db.query(Agent).filter(Agent.is_active == True).all()
+    result = []
+    for a in agents:
+        result.append({
+            "agent_id": a.id,
+            "name": a.name,
+            "open_count": count_map.get(a.id, 0),
+        })
+    return result
+
+
+def auto_assign_ticket(db: Session, ticket_id: int) -> Optional[int]:
+    """自动分单：分配给 open_tickets 最少的客服，若都 >=5 则不分配。
+    返回分配的 agent_id，或 None。
+    """
+    if not _is_auto_assign_enabled(db):
+        return None
+
+    workloads = _get_agent_open_counts(db)
+    if not workloads:
+        return None
+
+    # 按 open_count 升序排序
+    workloads.sort(key=lambda w: w["open_count"])
+
+    # 最少工单的客服
+    best = workloads[0]
+    if best["open_count"] >= MAX_OPEN_TICKETS:
+        # 所有客服工单都 >= 5，暂不分配
+        return None
+
+    # 分配工单
+    ticket_obj = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket_obj:
+        ticket_obj.assigned_to = best["agent_id"]
+        db.commit()
+        return best["agent_id"]
+    return None
 
 
 # ─── WebSocket Connection Manager ─────────────────────────────────
@@ -669,6 +734,17 @@ def create_ticket(data: dict, db: Session = Depends(get_db)):
     )
     db.add(msg)
     db.commit()
+    # 自动分单
+    assigned_agent_id = auto_assign_ticket(db, ticket.id)
+    db.refresh(ticket)
+
+    # 飞书新工单通知
+    player_name = player.nickname
+    feishu_bot.notify_new_ticket(
+        db, ticket.ticket_id, ticket.title,
+        player_name, ticket.priority.value if ticket.priority else "medium",
+    )
+
     return {"ticket_id": ticket.ticket_id}
 
 
@@ -696,6 +772,23 @@ def update_ticket(ticket_id: str, data: dict, db: Session = Depends(get_db)):
     ticket.updated_at = datetime.datetime.utcnow()
     db.commit()
     return {"ok": True}
+
+
+@app.post("/api/tickets/reassign")
+def reassign_tickets(db: Session = Depends(get_db)):
+    """手动触发重新分单所有未指派的工单"""
+    unassigned = db.query(Ticket).filter(
+        Ticket.assigned_to.is_(None),
+        Ticket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_PLAYER]),
+    ).all()
+
+    assigned_count = 0
+    for t in unassigned:
+        result = auto_assign_ticket(db, t.id)
+        if result is not None:
+            assigned_count += 1
+
+    return {"status": "ok", "assigned_count": assigned_count, "remaining": len(unassigned) - assigned_count}
 
 
 @app.post("/api/tickets/{ticket_id}/messages")
@@ -1137,6 +1230,9 @@ def ai_auto_reply(ticket_id: str, data: dict, db: Session = Depends(get_db)):
     ticket.updated_at = datetime.datetime.utcnow()
     db.commit()
 
+    # 飞书 AI 回复通知
+    feishu_bot.notify_ai_reply(db, ticket.ticket_id, ticket.title, reply_zh)
+
     return {
         "ok": True,
         "reply_zh": reply_zh,
@@ -1250,6 +1346,50 @@ def set_llm_config(data: dict, user: User = Depends(require_super_admin), db: Se
         "message": "AI 模型配置已保存",
         "api_key_masked": masked_key,
     }
+
+
+# ─── Auto-Assign Settings ──────────────────────────────────────────
+
+
+@app.get("/api/settings/auto-assign")
+def get_auto_assign_config(db: Session = Depends(get_db)):
+    """获取自动分单配置"""
+    return {
+        "enabled": get_setting(db, AI_ASSIGN_ENABLED_SETTING, "true"),
+        "max_open": MAX_OPEN_TICKETS,
+    }
+
+
+@app.post("/api/settings/auto-assign")
+def set_auto_assign_config(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """设置自动分单配置（超级管理员）"""
+    set_setting(db, AI_ASSIGN_ENABLED_SETTING, str(data.get("enabled", True)).lower())
+    return {"status": "ok", "message": "自动分单配置已保存"}
+
+
+# ─── Feishu Bot Settings ────────────────────────────────────────────
+
+
+@app.get("/api/settings/feishu")
+def get_feishu_config(db: Session = Depends(get_db)):
+    """获取飞书配置"""
+    return {
+        "webhook_url": get_setting(db, feishu_bot.FEISHU_WEBHOOK_URL_SETTING, ""),
+        "notify_new_ticket": get_setting(db, feishu_bot.FEISHU_NOTIFY_NEW_TICKET_SETTING, "true"),
+        "notify_ai_reply": get_setting(db, feishu_bot.FEISHU_NOTIFY_AI_REPLY_SETTING, "true"),
+    }
+
+
+@app.post("/api/settings/feishu")
+def set_feishu_config(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """设置飞书配置（超级管理员）"""
+    if "webhook_url" in data:
+        set_setting(db, feishu_bot.FEISHU_WEBHOOK_URL_SETTING, data["webhook_url"])
+    if "notify_new_ticket" in data:
+        set_setting(db, feishu_bot.FEISHU_NOTIFY_NEW_TICKET_SETTING, str(data["notify_new_ticket"]).lower())
+    if "notify_ai_reply" in data:
+        set_setting(db, feishu_bot.FEISHU_NOTIFY_AI_REPLY_SETTING, str(data["notify_ai_reply"]).lower())
+    return {"status": "ok", "message": "飞书通知配置已保存"}
 
 
 # ─── KB Utility for AI RAG ───────────────────────────────────────
@@ -1506,6 +1646,16 @@ def external_create_ticket(
     )
     db.add(msg)
     db.commit()
+
+    # 自动分单（外部API创建的工单）
+    auto_assign_ticket(db, ticket.id)
+    db.refresh(ticket)
+
+    # 飞书新工单通知（外部API）
+    feishu_bot.notify_new_ticket(
+        db, ticket.ticket_id, title,
+        player_name, priority.value if hasattr(priority, 'value') else str(priority),
+    )
 
     return {
         "ticket_id": ticket.ticket_id,

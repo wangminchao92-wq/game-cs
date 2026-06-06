@@ -1692,6 +1692,8 @@ async function loadAutoReplyConfig() {
 function loadSettings() {
     loadAutoReplyConfig();
     loadLlmConfig();
+    loadFeishuConfig();
+    loadAutoAssignConfig();
 }
 
 function updateAutoReplyStatus(data) {
@@ -1833,6 +1835,87 @@ async function testLlmConfig() {
         resultEl.style.background = 'rgba(239,83,80,0.15)';
         resultEl.style.border = '1px solid var(--accent-red)';
         resultEl.textContent = '❌ 连接失败: ' + msg;
+    }
+}
+
+// ═══ FEISHU CONFIG ═══════════════════════════════════════════════════
+
+async function loadFeishuConfig() {
+    try {
+        const data = await apiGet('/api/settings/feishu');
+        document.getElementById('feishu-webhook-url').value = data.webhook_url || '';
+        document.getElementById('feishu-notify-new-ticket').checked = data.notify_new_ticket === 'true';
+        document.getElementById('feishu-notify-ai-reply').checked = data.notify_ai_reply === 'true';
+    } catch (e) {
+        console.error('Load feishu config error:', e);
+    }
+}
+
+async function saveFeishuConfig() {
+    const webhookUrl = document.getElementById('feishu-webhook-url').value.trim();
+    const notifyNewTicket = document.getElementById('feishu-notify-new-ticket').checked;
+    const notifyAiReply = document.getElementById('feishu-notify-ai-reply').checked;
+    const statusEl = document.getElementById('feishu-config-status');
+    statusEl.textContent = '保存中...';
+
+    try {
+        const data = await apiPost('/api/settings/feishu', {
+            webhook_url: webhookUrl,
+            notify_new_ticket: notifyNewTicket,
+            notify_ai_reply: notifyAiReply,
+        });
+        showToast('✅ ' + data.message, 'success');
+        statusEl.textContent = '已保存';
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+        statusEl.textContent = '保存失败';
+    }
+}
+
+// ═══ AUTO-ASSIGN CONFIG ══════════════════════════════════════════════
+
+async function loadAutoAssignConfig() {
+    try {
+        const data = await apiGet('/api/settings/auto-assign');
+        document.getElementById('auto-assign-toggle').checked = data.enabled === 'true';
+    } catch (e) {
+        console.error('Load auto-assign config error:', e);
+    }
+}
+
+async function saveAutoAssignConfig() {
+    const enabled = document.getElementById('auto-assign-toggle').checked;
+    const statusEl = document.getElementById('auto-assign-status');
+    statusEl.textContent = '保存中...';
+
+    try {
+        const data = await apiPost('/api/settings/auto-assign', {
+            enabled: enabled,
+        });
+        showToast('✅ ' + data.message, 'success');
+        statusEl.textContent = '已保存';
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+        statusEl.textContent = '保存失败';
+    }
+}
+
+async function triggerReassign() {
+    const statusEl = document.getElementById('auto-assign-status');
+    statusEl.textContent = '重新分单中...';
+    try {
+        const data = await apiPost('/api/tickets/reassign', {});
+        showToast(`✅ 已分配 ${data.assigned_count} 个工单，剩余 ${data.remaining} 个未分配`, 'success');
+        statusEl.textContent = `已分配 ${data.assigned_count} 个`;
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+        statusEl.textContent = '重新分单失败';
     }
 }
 

@@ -1,0 +1,67 @@
+services:
+  # ─── PostgreSQL 数据库 ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gamecs
+      POSTGRES_USER: gamecs
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-gamecs123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamecs"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Redis 缓存与消息队列 ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── FastAPI 后端应用 ─────────────────────────────────────────────
+  backend:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://gamecs:${DB_PASSWORD:-gamecs123}@postgres:5432/gamecs
+      REDIS_URL: redis://redis:6379/0
+      GAMECS_JWT_SECRET: ${JWT_SECRET:-change-this-to-a-random-secret-in-production}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek_api}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      FEISHU_WEBHOOK_URL: ${FEISHU_WEBHOOK_URL:-}
+    volumes:
+      - uploads_data:/app/uploads
+    restart: unless-stopped
+
+  # ─── Nginx 反向代理 ───────────────────────────────────────────────
+  nginx:
+    build: ./nginx
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    depends_on:
+      - backend
+    volumes:
+      - uploads_data:/app/uploads
+      - ./static:/app/static
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

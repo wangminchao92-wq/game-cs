@@ -606,6 +606,63 @@
                             <div id="llm-test-result" style="margin-top:12px;padding:12px;border-radius:var(--radius-sm);font-size:13px;display:none"></div>
                         </div>
                     </div>
+
+                    <!-- ═══ FEISHU NOTIFICATION CONFIG ═══ -->
+                    <div class="card" style="margin-top:16px">
+                        <div class="card-header">
+                            <h3>🔔 飞书通知配置</h3>
+                            <div style="font-size:12px;color:var(--text-muted)">配置飞书机器人 Webhook，接收工单和 AI 回复通知</div>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label>飞书 Webhook URL</label>
+                                <input type="text" id="feishu-webhook-url" placeholder="如: https://open.feishu.cn/open-apis/bot/v2/hook/xxx" style="width:100%;padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-primary);color:var(--text-primary);font-size:13px">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding:8px 12px;background:var(--bg-hover);border-radius:var(--radius-sm)">
+                                <span style="font-size:13px">新工单通知</span>
+                                <label class="toggle-switch" style="margin-left:auto">
+                                    <input type="checkbox" id="feishu-notify-new-ticket" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;margin-top:8px;padding:8px 12px;background:var(--bg-hover);border-radius:var(--radius-sm)">
+                                <span style="font-size:13px">AI 自动回复通知</span>
+                                <label class="toggle-switch" style="margin-left:auto">
+                                    <input type="checkbox" id="feishu-notify-ai-reply" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div style="margin-top:16px;display:flex;align-items:center;gap:12px">
+                                <button class="btn btn-primary" onclick="saveFeishuConfig()">💾 保存飞书配置</button>
+                                <span id="feishu-config-status" style="font-size:13px;color:var(--text-muted)"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ AUTO-ASSIGN CONFIG ═══ -->
+                    <div class="card" style="margin-top:16px">
+                        <div class="card-header">
+                            <h3>📋 自动分单配置</h3>
+                            <div style="font-size:12px;color:var(--text-muted)">新工单自动分配给工单最少的客服</div>
+                        </div>
+                        <div class="card-body">
+                            <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-hover);border-radius:var(--radius-sm)">
+                                <span style="font-size:14px;font-weight:600">启用自动分单</span>
+                                <label class="toggle-switch" style="margin-left:auto">
+                                    <input type="checkbox" id="auto-assign-toggle" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div style="margin-top:8px;padding:8px 12px;font-size:12px;color:var(--text-muted)">
+                                当所有客服都有 5 个以上未处理工单时，新工单保留未指派状态
+                            </div>
+                            <div style="margin-top:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                                <button class="btn btn-primary" onclick="saveAutoAssignConfig()">💾 保存分单配置</button>
+                                <button class="btn btn-secondary" onclick="triggerReassign()" style="padding:8px 16px;border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;background:var(--bg-secondary);color:var(--text-primary);font-size:13px">🔄 重新分单</button>
+                                <span id="auto-assign-status" style="font-size:13px;color:var(--text-muted)"></span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
             </div>
