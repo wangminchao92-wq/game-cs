@@ -104,6 +104,24 @@ def require_super_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_manager_or_above(user: User = Depends(get_current_user)) -> User:
+    """要求当前用户为项目主管或以上（super_admin / project_manager）"""
+    if user.role not in ("super_admin", "project_manager"):
+        raise HTTPException(status_code=403, detail="需要项目主管或以上权限")
+    return user
+
+
+def get_role_label(role: str) -> str:
+    """角色显示名称"""
+    labels = {
+        "super_admin": "超级管理员",
+        "project_manager": "项目主管",
+        "project_assistant": "项目助理",
+        "agent": "客服人员",
+    }
+    return labels.get(role, role)
+
+
 def get_user_info(user: User) -> dict:
     """返回用户信息的字典（不含密码）"""
     return {
@@ -113,4 +131,5 @@ def get_user_info(user: User) -> dict:
         "role": user.role,
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat() if user.created_at else None,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }

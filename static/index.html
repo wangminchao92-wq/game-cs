@@ -33,6 +33,19 @@
                 <span class="logo-text">客服中心</span>
             </div>
             <div class="company-badge">南京云霞飞信息技术有限公司</div>
+            <!-- ═══ Game Switcher ═══ -->
+            <div class="game-switcher">
+                <div class="game-selector" onclick="toggleGameDropdown()">
+                    <span id="current-game-logo">🎮</span>
+                    <span id="current-game-name">选择游戏</span>
+                    <span class="game-arrow">▾</span>
+                </div>
+                <div class="game-dropdown" id="game-dropdown" style="display:none">
+                    <div class="game-dropdown-header">切换游戏</div>
+                    <div id="game-list-dropdown"></div>
+                    <div class="game-dropdown-all" onclick="switchView('games')">📋 管理游戏</div>
+                </div>
+            </div>
             <nav class="nav-menu">
                 <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard')">
                     <span class="nav-icon">📊</span>
@@ -55,9 +68,13 @@
                     <span class="nav-icon">📈</span>
                     <span>数据分析</span>
                 </div>
-                <div class="nav-item" data-view="team" onclick="switchView('team')">
+                <div class="nav-item" data-view="team" onclick="switchView('team')" id="nav-team">
                     <span class="nav-icon">👨‍👩‍👧‍👦</span>
                     <span>团队管理</span>
+                </div>
+                <div class="nav-item" data-view="schedule" onclick="switchView('schedule')" id="nav-schedule" style="display:none">
+                    <span class="nav-icon">📅</span>
+                    <span>排班管理</span>
                 </div>
                 <div class="nav-item" data-view="livechat" onclick="switchView('livechat')">
                     <span class="nav-icon">💬</span>
@@ -79,6 +96,10 @@
                 <div class="nav-item" data-view="settings" onclick="switchView('settings')" id="nav-settings" style="display:none">
                     <span class="nav-icon">⚙️</span>
                     <span>系统设置</span>
+                </div>
+                <div class="nav-item" data-view="games" onclick="switchView('games')" id="nav-games" style="display:none">
+                    <span class="nav-icon">🎮</span>
+                    <span>游戏管理</span>
                 </div>
             </nav>
             <div class="sidebar-footer">
@@ -390,6 +411,37 @@
                     </div>
                 </div>
 
+                <!-- ═══ SCHEDULE ═══ -->
+                <div id="view-schedule" class="view">
+                    <div class="toolbar">
+                        <span style="color:var(--text-secondary);font-size:14px">📅 排班管理</span>
+                        <div style="display:flex;gap:8px">
+                            <button class="btn btn-sm" onclick="loadScheduleView()" style="border-color:var(--accent-blue);color:var(--accent-blue)">🔄 刷新</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📋 今日出勤</h3>
+                            <span id="attendance-date" style="font-size:12px;color:var(--text-muted)"></span>
+                        </div>
+                        <div class="card-body">
+                            <div id="attendance-alerts" style="margin-bottom:16px"></div>
+                            <div id="attendance-table-wrap"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📅 每周排班表</h3>
+                            <div style="display:flex;gap:6px">
+                                <button class="btn btn-sm btn-primary" onclick="showAddShiftModal()" style="${window._isSuperAdmin ? '' : 'display:none'}">➕ 添加排班</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="schedule-grid"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ═══ LIVE CHAT ═══ -->
                 <div id="view-livechat" class="view">
                     <div class="toolbar">
@@ -488,6 +540,8 @@
                                 <label>角色</label>
                                 <select id="new-user-role">
                                     <option value="agent">客服人员</option>
+                                    <option value="project_assistant">项目助理</option>
+                                    <option value="project_manager">项目主管</option>
                                     <option value="super_admin">超级管理员</option>
                                 </select>
                             </div>
@@ -660,6 +714,35 @@
                                 <button class="btn btn-primary" onclick="saveAutoAssignConfig()">💾 保存分单配置</button>
                                 <button class="btn btn-secondary" onclick="triggerReassign()" style="padding:8px 16px;border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;background:var(--bg-secondary);color:var(--text-primary);font-size:13px">🔄 重新分单</button>
                                 <span id="auto-assign-status" style="font-size:13px;color:var(--text-muted)"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ GAMES VIEW ═══ -->
+                <div id="view-games" class="view">
+                    <div class="toolbar">
+                        <span style="color:var(--text-secondary);font-size:14px">🎮 游戏管理</span>
+                        <button class="btn btn-primary" onclick="showAddGameForm()" id="btn-add-game">➕ 添加游戏</button>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="games-grid" id="games-list"></div>
+                        </div>
+                    </div>
+                    <!-- Add Game Modal -->
+                    <div id="add-game-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeAddGameModal()">
+                        <div class="modal" style="max-width:420px">
+                            <div class="modal-header">
+                                <h3>添加游戏</h3>
+                                <span class="modal-close" onclick="closeAddGameModal()">✕</span>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group"><label>游戏名称 *</label><input type="text" id="new-game-name" placeholder="如：梦幻仙侠"></div>
+                                <div class="form-group"><label>游戏代码 *</label><input type="text" id="new-game-code" placeholder="如：mhxx（英文缩写，唯一）"></div>
+                                <div class="form-group"><label>图标</label><input type="text" id="new-game-logo" placeholder="如：🗡️" value="🎮" style="font-size:24px;width:60px"></div>
+                                <div class="form-group"><label>描述</label><textarea id="new-game-desc" placeholder="游戏简介" style="width:100%;padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-primary);color:var(--text-primary);font-size:13px;min-height:60px"></textarea></div>
+                                <button class="btn btn-primary" onclick="submitNewGame()" style="width:100%">创建游戏</button>
                             </div>
                         </div>
                     </div>

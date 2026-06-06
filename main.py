@@ -21,7 +21,7 @@ from sqlalchemy import func, extract, desc
 from database import init_db, get_db, SessionLocal
 from models import (
     Base, Agent, Player, User, SystemSetting, Ticket, TicketMessage, KnowledgeArticle, ApiKey,
-    TicketPriority, TicketStatus, TicketCategory,
+    TicketPriority, TicketStatus, TicketCategory, Game, AgentGame, AgentShift,
 )
 from translation_service import (
     translate, detect_language, suggest_reply,
@@ -31,7 +31,7 @@ import facebook_news
 import feishu_bot
 from auth import (
     hash_password, verify_password, create_access_token, decode_token,
-    get_current_user, require_super_admin, get_user_info,
+    get_current_user, require_super_admin, require_manager_or_above, get_user_info, get_role_label,
 )
 from fastapi.responses import JSONResponse
 
@@ -56,6 +56,7 @@ async def auth_middleware(request, call_next):
     public_prefixes = (
         "/api/auth/", "/api/external/",
         "/api/languages", "/api/translate", "/api/chat/token/",
+        "/api/games",
     )
     if path.startswith("/api/") and not path.startswith(public_prefixes):
         auth = request.headers.get("Authorization", "")
@@ -276,6 +277,9 @@ def login(data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="账户已被禁用")
 
     token = create_access_token(user_id=user.id, role=user.role, username=user.username)
+    # 记录登录时间
+    user.last_login_at = datetime.datetime.utcnow()
+    db.commit()
     return {
         "token": token,
         "user": get_user_info(user),
@@ -310,7 +314,7 @@ def create_user(data: dict, user: User = Depends(require_super_admin), db: Sessi
         raise HTTPException(status_code=400, detail="用户名至少3个字符")
     if not password or len(password) < 6:
         raise HTTPException(status_code=400, detail="密码至少6个字符")
-    if role not in ("agent", "super_admin"):
+    if role not in ("agent", "super_admin", "project_manager", "project_assistant"):
         raise HTTPException(status_code=400, detail="角色无效")
 
     existing = db.query(User).filter(User.username == username).first()
@@ -345,8 +349,8 @@ def update_user(
     if "password" in data and data["password"]:
         target.password_hash = hash_password(data["password"])
     if "role" in data:
-        if data["role"] not in ("agent", "super_admin"):
-            raise HTTPException(status_code=400, detail="角色无效")
+        if data["role"] not in ("agent", "super_admin", "project_manager", "project_assistant"):
+            raise HTTPException(status_code=400, detail="角色无效（可选: agent/super_admin/project_manager/project_assistant）")
         target.role = data["role"]
     if "is_active" in data:
         target.is_active = data["is_active"]
@@ -397,6 +401,20 @@ def _seed_users(db):
 def seed_data():
     db = SessionLocal()
     try:
+        # ── Games ──
+        if db.query(Game).count() == 0:
+            games = [
+                Game(name="梦幻仙侠", code="mhxx", logo="🗡️", description="MMORPG 仙侠题材手游"),
+                Game(name="荒野枪神", code="hyqs", logo="🔫", description="FPS 射击竞技游戏"),
+                Game(name="欢乐棋牌", code="hlqp", logo="🃏", description="休闲棋牌娱乐平台"),
+            ]
+            db.add_all(games)
+            db.flush()
+            game_mhxx, game_hyqs, game_hlqp = games
+        else:
+            games = db.query(Game).all()
+            game_mhxx, game_hyqs, game_hlqp = games[0], games[1] if len(games) > 1 else games[0], games[2] if len(games) > 2 else games[0]
+
         if db.query(Agent).count() > 0:
             _seed_users(db)
             return
@@ -413,12 +431,12 @@ def seed_data():
         _seed_users(db)
 
         players = [
-            Player(player_id="10001", nickname="剑圣小白", server="S1", level=85, vip_level=8, total_recharge=5280.0, status="active", language="zh-CN"),
-            Player(player_id="10002", nickname="法神无双", server="S2", level=92, vip_level=10, total_recharge=12800.0, status="active", language="zh-CN"),
-            Player(player_id="10003", nickname="暗夜猎手", server="S1", level=45, vip_level=3, total_recharge=328.0, status="active", language="zh-CN"),
-            Player(player_id="10004", nickname="JoãoSilva", server="S3", level=12, vip_level=1, total_recharge=128.0, status="active", language="pt-BR"),
-            Player(player_id="10005", nickname="被封的勇士", server="S5", level=67, vip_level=5, total_recharge=1680.0, status="banned", language="zh-CN"),
-            Player(player_id="10006", nickname="PedroGamer", server="S4", level=55, vip_level=4, total_recharge=880.0, status="active", language="pt-BR"),
+            Player(player_id="10001", nickname="剑圣小白", server="S1", level=85, vip_level=8, total_recharge=5280.0, status="active", language="zh-CN", game_id=game_mhxx.id),
+            Player(player_id="10002", nickname="法神无双", server="S2", level=92, vip_level=10, total_recharge=12800.0, status="active", language="zh-CN", game_id=game_mhxx.id),
+            Player(player_id="10003", nickname="暗夜猎手", server="S1", level=45, vip_level=3, total_recharge=328.0, status="active", language="zh-CN", game_id=game_hyqs.id),
+            Player(player_id="10004", nickname="JoãoSilva", server="S3", level=12, vip_level=1, total_recharge=128.0, status="active", language="pt-BR", game_id=game_mhxx.id),
+            Player(player_id="10005", nickname="被封的勇士", server="S5", level=67, vip_level=5, total_recharge=1680.0, status="banned", language="zh-CN", game_id=game_hyqs.id),
+            Player(player_id="10006", nickname="PedroGamer", server="S4", level=55, vip_level=4, total_recharge=880.0, status="active", language="pt-BR", game_id=game_hlqp.id),
         ]
         db.add_all(players)
         db.flush()
@@ -440,6 +458,7 @@ def seed_data():
                 title=t["title"], description=t["desc"],
                 category=t["cat"], priority=t["pri"], status=t["stat"],
                 player_id=t["pid"], assigned_to=t["aid"],
+                game_id=players[t["pid"]-1].game_id if t["pid"] <= len(players) else None,
                 created_at=now - datetime.timedelta(hours=random.randint(1, 72)),
             )
             db.add(ticket)
@@ -551,28 +570,34 @@ def seed_data():
 # -- Dashboard --
 
 @app.get("/api/dashboard")
-def dashboard(db: Session = Depends(get_db)):
+def dashboard(game_id: Optional[int] = None, db: Session = Depends(get_db)):
     now = datetime.datetime.utcnow()
     week_ago = now - datetime.timedelta(days=7)
 
-    total_tickets = db.query(Ticket).count()
-    open_tickets = db.query(Ticket).filter(Ticket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])).count()
-    resolved_tickets = db.query(Ticket).filter(Ticket.status == TicketStatus.RESOLVED).count()
-    urgent_tickets = db.query(Ticket).filter(
+    ticket_q = db.query(Ticket)
+    if game_id:
+        ticket_q = ticket_q.filter(Ticket.game_id == game_id)
+
+    total_tickets = ticket_q.count()
+    open_tickets = ticket_q.filter(Ticket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])).count()
+    resolved_tickets = ticket_q.filter(Ticket.status == TicketStatus.RESOLVED).count()
+    urgent_tickets = ticket_q.filter(
         Ticket.priority == TicketPriority.URGENT,
         Ticket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS]),
     ).count()
 
     # Tickets by status
-    status_counts = db.query(Ticket.status, func.count(Ticket.id)).group_by(Ticket.status).all()
+    status_counts = ticket_q.with_entities(Ticket.status, func.count(Ticket.id)).group_by(Ticket.status).all()
 
     # Tickets by category this week
-    cat_counts = db.query(Ticket.category, func.count(Ticket.id)).filter(
+    cat_counts = ticket_q.with_entities(
+        Ticket.category, func.count(Ticket.id)
+    ).filter(
         Ticket.created_at >= week_ago
     ).group_by(Ticket.category).all()
 
     # Recent tickets
-    recent = db.query(Ticket).order_by(desc(Ticket.created_at)).limit(5).all()
+    recent = ticket_q.order_by(desc(Ticket.created_at)).limit(5).all()
     recent_data = []
     for t in recent:
         pname = t.player.nickname if t.player else "未知"
@@ -584,22 +609,28 @@ def dashboard(db: Session = Depends(get_db)):
         })
 
     # Avg resolution time (hours)
-    resolved_list = db.query(Ticket).filter(
+    resolve_q = db.query(Ticket).filter(
         Ticket.status == TicketStatus.RESOLVED,
         Ticket.resolved_at.isnot(None),
-    ).all()
+    )
+    if game_id:
+        resolve_q = resolve_q.filter(Ticket.game_id == game_id)
+    resolved_list = resolve_q.all()
     avg_resolve_hours = 0
     if resolved_list:
         diffs = [(t.resolved_at - t.created_at).total_seconds() / 3600 for t in resolved_list]
         avg_resolve_hours = round(sum(diffs) / len(diffs), 1)
 
     # Agent workload
-    agent_rows = db.query(
+    agent_query = db.query(
         Agent.id, Agent.name, Agent.avatar,
         func.count(Ticket.id).label("open_count"),
     ).outerjoin(Ticket, (Ticket.assigned_to == Agent.id) & Ticket.status.in_(
         [TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_PLAYER]
-    )).group_by(Agent.id).all()
+    ))
+    if game_id:
+        agent_query = agent_query.filter(Ticket.game_id == game_id)
+    agent_rows = agent_query.group_by(Agent.id).all()
 
     agent_workload = [{
         "id": r[0], "name": r[1], "avatar": r[2], "open_count": r[3]
@@ -624,6 +655,7 @@ def dashboard(db: Session = Depends(get_db)):
 def list_tickets(
     status: str = None, priority: str = None, category: str = None,
     agent_id: int = None, q: str = "",
+    game_id: Optional[int] = None,
     page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
@@ -636,6 +668,8 @@ def list_tickets(
         query = query.filter(Ticket.category == category)
     if agent_id:
         query = query.filter(Ticket.assigned_to == agent_id)
+    if game_id:
+        query = query.filter(Ticket.game_id == game_id)
     if q:
         query = query.filter(
             Ticket.title.ilike(f"%{q}%") | Ticket.description.ilike(f"%{q}%") | Ticket.ticket_id.ilike(f"%{q}%")
@@ -841,12 +875,14 @@ def add_message(ticket_id: str, data: dict, db: Session = Depends(get_db)):
 # -- Players --
 
 @app.get("/api/players")
-def list_players(q: str = "", page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+def list_players(q: str = "", game_id: Optional[int] = None, page: int = Query(1, ge=1), per_page: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     query = db.query(Player)
     if q:
         query = query.filter(
             Player.player_id.ilike(f"%{q}%") | Player.nickname.ilike(f"%{q}%")
         )
+    if game_id:
+        query = query.filter(Player.game_id == game_id)
     total = query.count()
     players = query.offset((page-1)*per_page).limit(per_page).all()
 
@@ -861,6 +897,7 @@ def list_players(q: str = "", page: int = Query(1, ge=1), per_page: int = Query(
             "id": p.id, "player_id": p.player_id, "nickname": p.nickname,
             "server": p.server, "level": p.level, "vip_level": p.vip_level,
             "total_recharge": p.total_recharge, "status": p.status,
+            "game_id": p.game_id,
             "language": p.language,  # Multi-language support
             "language_name": get_language_name(p.language),
             "language_flag": get_language_flag(p.language),
@@ -901,7 +938,7 @@ def get_player(player_id: str, db: Session = Depends(get_db)):
 # -- Agents --
 
 @app.get("/api/agents")
-def list_agents(db: Session = Depends(get_db)):
+def list_agents(user: User = Depends(require_manager_or_above), db: Session = Depends(get_db)):
     agents = db.query(Agent).all()
     result = []
     for a in agents:
@@ -921,7 +958,7 @@ def list_agents(db: Session = Depends(get_db)):
 
 
 @app.post("/api/agents")
-def create_agent(data: dict, db: Session = Depends(get_db)):
+def create_agent(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
     """新增客服人员，自动创建系统登录账号"""
     name = data.get("name", "").strip()
     email = data.get("email", "").strip()
@@ -987,7 +1024,7 @@ async def upload_avatar(file: UploadFile = File(...)):
 
 
 @app.delete("/api/agents/{agent_id}")
-def delete_agent(agent_id: int, db: Session = Depends(get_db)):
+def delete_agent(agent_id: int, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
     """删除客服人员（需先解除关联工单）"""
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
     if not agent:
@@ -1002,10 +1039,268 @@ def delete_agent(agent_id: int, db: Session = Depends(get_db)):
     return {"status": "ok", "message": f"客服 '{agent.name}' 已删除"}
 
 
+# ─── Game CRUD ──────────────────────────────────────────────────
+
+
+@app.get("/api/games")
+def list_games(db: Session = Depends(get_db)):
+    """获取所有激活的游戏（公开）"""
+    games = db.query(Game).filter(Game.is_active == True).all()
+    return {"games": [{
+        "id": g.id, "name": g.name, "code": g.code,
+        "logo": g.logo, "description": g.description,
+        "created_at": g.created_at.isoformat() if g.created_at else None,
+    } for g in games]}
+
+
+@app.get("/api/games/all")
+def list_all_games(user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """获取全部游戏（含停用，仅超级管理员）"""
+    games = db.query(Game).all()
+    return {"games": [{
+        "id": g.id, "name": g.name, "code": g.code,
+        "logo": g.logo, "description": g.description, "is_active": g.is_active,
+        "created_at": g.created_at.isoformat() if g.created_at else None,
+    } for g in games]}
+
+
+@app.post("/api/games")
+def create_game(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """创建新游戏（超级管理员）"""
+    name = data.get("name", "").strip()
+    code = data.get("code", "").strip()
+    if not name or not code:
+        raise HTTPException(400, "游戏名称和代码不能为空")
+    existing = db.query(Game).filter(Game.code == code, Game.is_active == True).first()
+    if existing:
+        raise HTTPException(400, f"游戏代码 '{code}' 已存在")
+    game = Game(name=name, code=code, logo=data.get("logo", "🎮"), description=data.get("description", ""))
+    db.add(game)
+    db.commit()
+    db.refresh(game)
+    return {"status": "ok", "message": f"游戏 '{name}' 已创建", "game": {
+        "id": game.id, "name": game.name, "code": game.code,
+        "logo": game.logo, "description": game.description,
+    }}
+
+
+@app.put("/api/games/{game_id}")
+def update_game(game_id: int, data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """更新游戏信息（超级管理员）"""
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(404, "游戏不存在")
+    for field in ["name", "code", "logo", "description"]:
+        if field in data:
+            setattr(game, field, data[field])
+    if "is_active" in data:
+        game.is_active = data["is_active"]
+    db.commit()
+    return {"status": "ok", "message": f"游戏 '{game.name}' 已更新"}
+
+
+@app.delete("/api/games/{game_id}")
+def delete_game(game_id: int, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """删除游戏及其关联数据（超级管理员）"""
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(404, "游戏不存在")
+    # 清理客服-游戏关联
+    db.query(AgentGame).filter(AgentGame.game_id == game_id).delete()
+    # 清理游戏数据
+    db.delete(game)
+    db.commit()
+    return {"status": "ok", "message": f"游戏 '{game.name}' 已删除"}
+
+
+# ─── Agent-Game Association ──────────────────────────────────────
+
+
+@app.get("/api/agents/{agent_id}/games")
+def get_agent_games(agent_id: int, db: Session = Depends(get_db)):
+    """获取客服可处理的游戏列表"""
+    assignments = db.query(AgentGame).filter(AgentGame.agent_id == agent_id).all()
+    game_ids = [a.game_id for a in assignments]
+    games = db.query(Game).filter(Game.id.in_(game_ids)).all() if game_ids else []
+    return {"game_ids": game_ids, "games": [{
+        "id": g.id, "name": g.name, "code": g.code, "logo": g.logo,
+    } for g in games]}
+
+
+@app.post("/api/agents/{agent_id}/games")
+def set_agent_games(agent_id: int, data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """设置客服可处理的游戏列表（超级管理员）"""
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(404, "客服不存在")
+    game_ids = data.get("game_ids", [])
+    # 删除旧的关联
+    db.query(AgentGame).filter(AgentGame.agent_id == agent_id).delete()
+    # 添加新的关联
+    for gid in game_ids:
+        db.add(AgentGame(agent_id=agent_id, game_id=gid))
+    db.commit()
+    return {"status": "ok", "message": f"客服 '{agent.name}' 的游戏权限已更新", "game_ids": game_ids}
+
+
+# ─── Agent Shift Schedule ────────────────────────────────────────
+
+
+@app.get("/api/shifts")
+def list_shifts(agent_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """获取排班列表"""
+    query = db.query(AgentShift)
+    if agent_id:
+        query = query.filter(AgentShift.agent_id == agent_id)
+    shifts = query.order_by(AgentShift.day_of_week, AgentShift.start_time).all()
+    return {"shifts": [{
+        "id": s.id, "agent_id": s.agent_id, "agent_name": s.agent.name,
+        "agent_avatar": s.agent.avatar, "day_of_week": s.day_of_week,
+        "start_time": s.start_time, "end_time": s.end_time, "is_active": s.is_active,
+    } for s in shifts]}
+
+
+@app.post("/api/shifts")
+def create_shift(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """新增排班（超级管理员）"""
+    agent_id = data.get("agent_id")
+    day_of_week = data.get("day_of_week")
+    start_time = data.get("start_time")
+    end_time = data.get("end_time")
+
+    if not all([agent_id, day_of_week is not None, start_time, end_time]):
+        raise HTTPException(400, "缺少必填参数")
+    if day_of_week < 0 or day_of_week > 6:
+        raise HTTPException(400, "星期值无效（0-6）")
+
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(404, "客服不存在")
+
+    shift = AgentShift(
+        agent_id=agent_id, day_of_week=day_of_week,
+        start_time=start_time, end_time=end_time,
+    )
+    db.add(shift)
+    db.commit()
+    db.refresh(shift)
+    return {"status": "ok", "message": "排班已添加", "shift": {
+        "id": shift.id, "agent_id": shift.agent_id,
+        "day_of_week": shift.day_of_week,
+        "start_time": shift.start_time, "end_time": shift.end_time,
+    }}
+
+
+@app.delete("/api/shifts/{shift_id}")
+def delete_shift(shift_id: int, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """删除排班（超级管理员）"""
+    shift = db.query(AgentShift).filter(AgentShift.id == shift_id).first()
+    if not shift:
+        raise HTTPException(404, "排班不存在")
+    db.delete(shift)
+    db.commit()
+    return {"status": "ok", "message": "排班已删除"}
+
+
+@app.get("/api/shifts/attendance")
+def check_attendance(user: User = Depends(require_manager_or_above), db: Session = Depends(get_db)):
+    """检查今日排班出勤情况（谁迟到了/谁没登录）"""
+    now = datetime.datetime.utcnow()
+    today_weekday = now.weekday()  # 0=周一, 6=周日
+
+    # 找出今天有排班的
+    shifts_today = db.query(AgentShift).filter(
+        AgentShift.day_of_week == today_weekday,
+        AgentShift.is_active == True,
+    ).all()
+
+    result = []
+    for s in shifts_today:
+        agent = s.agent
+        if not agent or not agent.is_active:
+            continue
+
+        # 找到这个客服关联的登录用户（通过显示名称匹配）
+        user = db.query(User).filter(User.display_name == agent.name).first()
+        if not user:
+            # 降级：通过用户名匹配
+            possible_username = agent.email.split('@')[0] if agent.email else None
+            if possible_username:
+                user = db.query(User).filter(User.username == possible_username).first()
+
+        # 解析排班开始时间
+        parts = s.start_time.split(":")
+        shift_start_hour, shift_start_min = int(parts[0]), int(parts[1])
+
+        # 检查是否已登录
+        is_logged_in = False
+        login_status = "not_logged_in"  # not_logged_in, on_time, late
+        login_time_str = None
+        late_minutes = 0
+
+        if user and user.last_login_at:
+            login_time_str = user.last_login_at.isoformat()
+            # 比较登录日期是否是今天
+            login_date = user.last_login_at.date()
+            if login_date == now.date():
+                is_logged_in = True
+                login_hour = user.last_login_at.hour
+                login_min = user.last_login_at.minute
+                login_total_min = login_hour * 60 + login_min
+                shift_start_total = shift_start_hour * 60 + shift_start_min
+
+                if login_total_min <= shift_start_total + 15:  # 15分钟宽限
+                    login_status = "on_time"
+                else:
+                    login_status = "late"
+                    late_minutes = login_total_min - shift_start_total
+
+        # 如果现在是上班时间之后且未登录，标记为缺勤
+        now_total_min = now.hour * 60 + now.minute
+        shift_start_total = shift_start_hour * 60 + shift_start_min
+        is_shift_active = now_total_min >= shift_start_total
+
+        status_label = "正常"
+        if is_shift_active and not is_logged_in:
+            status_label = "⚠️ 未登录"
+        elif is_shift_active and login_status == "late":
+            status_label = f"⚠️ 迟到 {late_minutes}分钟"
+        elif is_logged_in and login_status == "on_time":
+            status_label = "✅ 按时登录"
+
+        result.append({
+            "id": s.id,
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "agent_avatar": agent.avatar,
+            "shift_time": f"{s.start_time}-{s.end_time}",
+            "is_logged_in": is_logged_in,
+            "login_status": login_status,
+            "login_time": login_time_str,
+            "late_minutes": late_minutes,
+            "is_shift_active": is_shift_active,
+            "status_label": status_label,
+        })
+
+    # 按排班开始时间排序
+    result.sort(key=lambda x: x["shift_time"])
+
+    # 汇总：哪些人需要通知主管
+    alerts = [r for r in result if r["status_label"].startswith("⚠️")]
+
+    return {
+        "date": now.date().isoformat(),
+        "weekday": today_weekday,
+        "total_on_shift": len(result),
+        "attendance": result,
+        "alerts": alerts,
+    }
+
+
 # -- Knowledge Base --
 
 @app.get("/api/kb")
-def list_knowledge(q: str = "", category: str = None, db: Session = Depends(get_db)):
+def list_knowledge(q: str = "", category: str = None, game_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(KnowledgeArticle)
     if q:
         query = query.filter(
@@ -1013,6 +1308,8 @@ def list_knowledge(q: str = "", category: str = None, db: Session = Depends(get_
         )
     if category:
         query = query.filter(KnowledgeArticle.category == category)
+    if game_id:
+        query = query.filter(KnowledgeArticle.game_id == game_id)
     articles = query.order_by(desc(KnowledgeArticle.helpful_count)).all()
     return {"articles": [{
         "id": a.id, "title": a.title, "category": a.category,
@@ -1475,7 +1772,7 @@ def _reply_to_ticket(ticket: Ticket, player_lang: str, db: Session) -> Optional[
 # -- Analytics --
 
 @app.get("/api/analytics")
-def analytics(period: str = "7d", db: Session = Depends(get_db)):
+def analytics(period: str = "7d", game_id: Optional[int] = None, db: Session = Depends(get_db)):
     now = datetime.datetime.utcnow()
     if period == "7d":
         start = now - datetime.timedelta(days=7)
@@ -1484,28 +1781,39 @@ def analytics(period: str = "7d", db: Session = Depends(get_db)):
     else:
         start = now - datetime.timedelta(days=7)
 
+    # Base ticket query with optional game filter
+    def _ticket_base():
+        q = db.query(Ticket)
+        if game_id:
+            q = q.filter(Ticket.game_id == game_id)
+        return q
+
     # Daily ticket creation
-    days_data = db.query(
+    days_q = _ticket_base().filter(Ticket.created_at >= start)
+    days_data = days_q.with_entities(
         extract('year', Ticket.created_at).label('year'),
         extract('month', Ticket.created_at).label('month'),
         extract('day', Ticket.created_at).label('day'),
         func.count(Ticket.id).label('count'),
-    ).filter(Ticket.created_at >= start).group_by('year', 'month', 'day').order_by('year', 'month', 'day').all()
+    ).group_by('year', 'month', 'day').order_by('year', 'month', 'day').all()
 
     daily = []
     for d in days_data:
         daily.append({"date": f"{int(d.year)}-{int(d.month):02d}-{int(d.day):02d}", "count": d.count})
 
     # Category distribution
-    cat_data = db.query(Ticket.category, func.count(Ticket.id)).group_by(Ticket.category).all()
+    cat_data = _ticket_base().with_entities(Ticket.category, func.count(Ticket.id)).group_by(Ticket.category).all()
     categories = [{"name": c.value if hasattr(c, 'value') else str(c), "count": n} for c, n in cat_data]
 
     # Agent performance
-    agent_rows = db.query(
+    agent_q = db.query(
         Agent.id, Agent.name, Agent.avatar,
         func.count(Ticket.id).filter(Ticket.status == TicketStatus.RESOLVED).label('resolved'),
         func.count(Ticket.id).label('total'),
-    ).outerjoin(Ticket, Ticket.assigned_to == Agent.id).group_by(Agent.id).all()
+    ).outerjoin(Ticket, Ticket.assigned_to == Agent.id)
+    if game_id:
+        agent_q = agent_q.filter(Ticket.game_id == game_id)
+    agent_rows = agent_q.group_by(Agent.id).all()
 
     performance = [{
         "name": r[1], "avatar": r[2],

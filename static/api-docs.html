@@ -366,8 +366,11 @@
         // ─── API Key Management ─────────────────────────────────
         async function loadApiKeys() {
             try {
-                const resp = await fetch('/api/admin/api-keys');
-                if (!resp.ok) throw new Error('Unauthorized');
+                const token = localStorage.getItem('gcs_token');
+                const headers = {};
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                const resp = await fetch('/api/admin/api-keys', {headers});
+                if (!resp.ok) throw new Error('请先登录系统');
                 const data = await resp.json();
                 const list = document.getElementById('apikey-list');
                 
@@ -401,9 +404,12 @@
             if (!name) { alert('请输入接入方名称'); return; }
             
             try {
+                const token = localStorage.getItem('gcs_token');
+                const headers = {'Content-Type': 'application/json'};
+                if (token) headers['Authorization'] = 'Bearer ' + token;
                 const resp = await fetch('/api/admin/api-keys', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers,
                     body: JSON.stringify({name, website_url: url}),
                 });
                 if (!resp.ok) throw new Error('创建失败');
@@ -420,7 +426,10 @@
         async function deleteApiKey(id) {
             if (!confirm('确定要删除此 API Key 吗？')) return;
             try {
-                await fetch('/api/admin/api-keys/' + id, {method: 'DELETE'});
+                const token = localStorage.getItem('gcs_token');
+                const headers = {};
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                await fetch('/api/admin/api-keys/' + id, {method: 'DELETE', headers});
                 loadApiKeys();
             } catch (e) {
                 alert('删除失败: ' + e.message);

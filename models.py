@@ -37,11 +37,12 @@ class Agent(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(200), unique=True, nullable=False)
     role = Column(String(50), default="agent")  # agent, supervisor, admin
-    avatar = Column(String(10), default="👤")
+    avatar = Column(String(100), default="👤")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     tickets = relationship("Ticket", back_populates="assigned_agent", foreign_keys="Ticket.assigned_to")
+    games = relationship("Game", secondary="agent_games", back_populates="agents")
 
 
 class User(Base):
@@ -55,6 +56,49 @@ class User(Base):
     role = Column(String(20), default="agent")  # super_admin, agent
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)  # 最后登录时间
+
+
+class AgentShift(Base):
+    """客服排班表"""
+    __tablename__ = "agent_shifts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    day_of_week = Column(Integer, nullable=False)  # 0=周一, 6=周日
+    start_time = Column(String(5), nullable=False)  # "09:00"
+    end_time = Column(String(5), nullable=False)    # "18:00"
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    agent = relationship("Agent")
+
+
+# ─── Multi-Game Support ─────────────────────────────────────────
+
+
+class Game(Base):
+    """游戏项目"""
+    __tablename__ = "games"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    code = Column(String(20), unique=True, index=True, nullable=False)  # 简称如 wow, lol
+    logo = Column(String(10), default="🎮")  # emoji 图标
+    description = Column(String(500), default="")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    agents = relationship("Agent", secondary="agent_games", back_populates="games")
+
+
+class AgentGame(Base):
+    """客服-游戏 多对多关联"""
+    __tablename__ = "agent_games"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"))
+    game_id = Column(Integer, ForeignKey("games.id"))
 
 
 class SystemSetting(Base):
@@ -73,6 +117,7 @@ class Player(Base):
     player_id = Column(String(50), unique=True, index=True, nullable=False)
     nickname = Column(String(100), nullable=False)
     server = Column(String(50), default="S1")
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=True)
     level = Column(Integer, default=1)
     vip_level = Column(Integer, default=0)
     total_recharge = Column(Float, default=0.0)
@@ -96,6 +141,7 @@ class Ticket(Base):
     priority = Column(Enum(TicketPriority), default=TicketPriority.MEDIUM)
     status = Column(Enum(TicketStatus), default=TicketStatus.OPEN)
     ai_mode = Column(Boolean, default=True)  # AI-assisted mode on/off
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=True)
 
     player_id = Column(Integer, ForeignKey("players.id"))
     assigned_to = Column(Integer, ForeignKey("agents.id"), nullable=True)
@@ -146,6 +192,7 @@ class KnowledgeArticle(Base):
     content = Column(Text, nullable=False)
     category = Column(String(50), default="general")
     tags = Column(String(500), default="")
+    game_id = Column(Integer, ForeignKey("games.id"), nullable=True)
     helpful_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

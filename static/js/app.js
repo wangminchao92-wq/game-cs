@@ -27,6 +27,7 @@ function switchView(view) {
     else if (view === 'knowledge') loadKB();
     else if (view === 'analytics') loadAnalytics();
     else if (view === 'team') loadTeam();
+    else if (view === 'schedule') loadScheduleView();
 }
 
 // ─── Navigation ───
@@ -111,11 +112,32 @@ function doLogout() {
 }
 
 function onAuthSuccess() {
-    // Show/hide super_admin nav items
+    // Role hierarchy: super_admin > project_manager > project_assistant > agent
+    const role = currentUser && currentUser.role;
+    const isSuperAdmin = role === 'super_admin';
+    const isManagerOrAbove = role === 'super_admin' || role === 'project_manager';
+    const isAssistantOrAbove = role === 'super_admin' || role === 'project_manager' || role === 'project_assistant';
+
+    // Show/hide nav items by role
     const navUsers = document.getElementById('nav-users');
-    if (navUsers) navUsers.style.display = currentUser && currentUser.role === 'super_admin' ? '' : 'none';
+    if (navUsers) navUsers.style.display = isSuperAdmin ? '' : 'none';
     const navSettings = document.getElementById('nav-settings');
-    if (navSettings) navSettings.style.display = currentUser && currentUser.role === 'super_admin' ? '' : 'none';
+    if (navSettings) navSettings.style.display = isSuperAdmin ? '' : 'none';
+    const navGames = document.getElementById('nav-games');
+    if (navGames) navGames.style.display = isSuperAdmin ? '' : 'none';
+    const navTeam = document.getElementById('nav-team');
+    if (navTeam) navTeam.style.display = isManagerOrAbove ? '' : 'none';
+    const navSchedule = document.getElementById('nav-schedule');
+    if (navSchedule) navSchedule.style.display = isManagerOrAbove ? '' : 'none';
+    const btnAddGame = document.getElementById('btn-add-game');
+    if (btnAddGame) btnAddGame.style.display = isSuperAdmin ? '' : 'none';
+    // Store role info globally
+    window._isSuperAdmin = isSuperAdmin;
+    window._isManagerOrAbove = isManagerOrAbove;
+    window._isAssistantOrAbove = isAssistantOrAbove;
+    window._userRole = role;
+    // Init game switcher
+    updateGameSwitcher();
     // Add logout button to topbar if not exists
     if (!document.getElementById('logout-btn')) {
         const right = document.querySelector('.topbar-right');
@@ -243,7 +265,8 @@ function globalSearch() {
 
 async function loadDashboard() {
     try {
-        const data = await apiGet('/api/dashboard');
+        const gid = getStoredGameId();
+        const data = await apiGet('/api/dashboard' + (gid ? '?game_id=' + gid : ''));
         document.getElementById('stat-total').textContent = data.total_tickets;
         document.getElementById('stat-open').textContent = data.open_tickets;
         document.getElementById('stat-resolved').textContent = data.resolved_tickets;
@@ -295,6 +318,8 @@ async function loadTickets() {
     if (priority) params.set('priority', priority);
     if (category) params.set('category', category);
     if (q) params.set('q', q);
+    const gid = getStoredGameId();
+    if (gid) params.set('game_id', gid);
 
     try {
         const data = await apiGet('/api/tickets?' + params);
@@ -500,6 +525,8 @@ async function loadPlayers() {
     const q = document.getElementById('player-search').value;
     const params = new URLSearchParams({page: playerPage, per_page: 20});
     if (q) params.set('q', q);
+    const gid = getStoredGameId();
+    if (gid) params.set('game_id', gid);
     try {
         const data = await apiGet('/api/players?' + params);
         const tb = document.querySelector('#players-table tbody');
@@ -703,6 +730,8 @@ async function loadKB() {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
     if (cat) params.set('category', cat);
+    const gid = getStoredGameId();
+    if (gid) params.set('game_id', gid);
     try {
         const data = await apiGet('/api/kb?' + params);
         const list = document.getElementById('kb-list');
@@ -778,7 +807,8 @@ async function submitNewArticle() {
 async function loadAnalytics() {
     const period = document.getElementById('analytics-period').value;
     try {
-        const data = await apiGet('/api/analytics?period=' + period);
+        const gid = getStoredGameId();
+        const data = await apiGet('/api/analytics?period=' + period + (gid ? '&game_id=' + gid : ''));
 
         // Daily chart
         const dailyEl = document.getElementById('chart-daily');
@@ -1060,6 +1090,7 @@ function switchView(view) {
         livechat: '💬 实时聊天', facebook: '📰 Facebook热点',
         users: '👥 用户管理',
         settings: '⚙️ 系统设置',
+        games: '🎮 游戏管理',
     };
     document.getElementById('view-title').textContent = titles[view] || view;
 
@@ -1069,10 +1100,373 @@ function switchView(view) {
     else if (view === 'knowledge') loadKB();
     else if (view === 'analytics') loadAnalytics();
     else if (view === 'team') loadTeam();
+    else if (view === 'schedule') loadScheduleView();
     else if (view === 'livechat') initLiveChat();
     else if (view === 'facebook') initFbNews();
     else if (view === 'users') loadUsers();
     else if (view === 'settings') loadSettings();
+    else if (view === 'games') loadGamesView();
+}
+
+// ═══ GAME SWITCHER & MANAGEMENT ══════════════════════════════════
+
+let currentGameId = null;
+const GAME_ALL = '__all__';
+
+function getStoredGameId() {
+    return localStorage.getItem('gcs_game_id') || null;
+}
+
+function setStoredGameId(id) {
+    if (id) {
+        localStorage.setItem('gcs_game_id', id);
+        currentGameId = id;
+    } else {
+        localStorage.removeItem('gcs_game_id');
+        currentGameId = null;
+    }
+}
+
+async function loadGames() {
+    try {
+        const data = await apiGet('/api/games');
+        return data.games || [];
+    } catch (e) {
+        return [];
+    }
+}
+
+async function updateGameSwitcher() {
+    const games = await loadGames();
+    const dropdown = document.getElementById('game-list-dropdown');
+    const storedId = getStoredGameId();
+
+    // Update dropdown
+    let html = '';
+    if (games.length === 0) {
+        html = '<div class="game-dropdown-item" style="color:var(--text-muted);font-size:12px">暂无游戏</div>';
+    } else {
+        html = `<div class="game-dropdown-item ${!storedId ? 'active' : ''}" onclick="selectGame(null)">
+            <span>🌐</span><span>全部游戏</span>
+        </div>`;
+        for (const g of games) {
+            const active = storedId && String(g.id) === String(storedId);
+            html += `<div class="game-dropdown-item ${active ? 'active' : ''}" onclick="selectGame(${g.id})">
+                <span>${g.logo}</span><span>${g.name}</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">${g.code}</span>
+            </div>`;
+        }
+    }
+    dropdown.innerHTML = html;
+
+    // Update selector display
+    if (storedId) {
+        const selected = games.find(g => String(g.id) === String(storedId));
+        if (selected) {
+            document.getElementById('current-game-logo').textContent = selected.logo;
+            document.getElementById('current-game-name').textContent = selected.name;
+        }
+    } else {
+        document.getElementById('current-game-logo').textContent = '🌐';
+        document.getElementById('current-game-name').textContent = '全部游戏';
+    }
+}
+
+function toggleGameDropdown() {
+    const dd = document.getElementById('game-dropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+
+function selectGame(gameId) {
+    setStoredGameId(gameId);
+    document.getElementById('game-dropdown').style.display = 'none';
+    updateGameSwitcher();
+    // Reload current view if on a data view
+    const view = currentView;
+    if (['dashboard','tickets','players','knowledge','analytics','team'].includes(view)) {
+        switchView(view);
+    }
+}
+
+// Close game dropdown on click outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.game-switcher')) {
+        const dd = document.getElementById('game-dropdown');
+        if (dd) dd.style.display = 'none';
+    }
+});
+
+async function loadGamesView() {
+    const games = await loadGames();
+    const storedId = getStoredGameId();
+    const list = document.getElementById('games-list');
+    let html = '';
+    for (const g of games) {
+        const active = storedId && String(g.id) === String(storedId);
+        html += `<div class="game-card ${active ? 'active' : ''}" onclick="selectGame(${g.id})">
+            <div class="game-card-logo">${g.logo}</div>
+            <div class="game-card-name">${g.name}</div>
+            <div class="game-card-code">${g.code}</div>
+            <div class="game-card-desc">${g.description || '暂无描述'}</div>
+            ${window._isSuperAdmin ? `<div class="game-card-actions">
+                <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteGame(${g.id},'${g.name}')" title="删除此游戏">🗑️ 删除</button>
+            </div>` : ''}
+        </div>`;
+    }
+    if (!html) html = '<div style="text-align:center;padding:30px;color:var(--text-muted)">暂无游戏，点击上方按钮添加</div>';
+    list.innerHTML = html;
+}
+
+async function deleteGame(gameId, gameName) {
+    if (!confirm(`确定要永久删除游戏「${gameName}」吗？\n\n该游戏数据将被彻底清除，不可恢复！`)) return;
+    try {
+        const data = await apiDelete('/api/games/' + gameId);
+        showToast('✅ ' + data.message, 'success');
+        // If currently viewing this game's data, switch back to all games
+        const storedId = getStoredGameId();
+        if (storedId && String(storedId) === String(gameId)) {
+            selectGame(null);
+        }
+        loadGamesView();
+        updateGameSwitcher();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+    }
+}
+
+function showAddGameForm() {
+    document.getElementById('add-game-modal').style.display = 'flex';
+    document.getElementById('new-game-name').value = '';
+    document.getElementById('new-game-code').value = '';
+    document.getElementById('new-game-logo').value = '🎮';
+    document.getElementById('new-game-desc').value = '';
+}
+
+function closeAddGameModal() {
+    document.getElementById('add-game-modal').style.display = 'none';
+}
+
+async function submitNewGame() {
+    const name = document.getElementById('new-game-name').value.trim();
+    const code = document.getElementById('new-game-code').value.trim().toLowerCase();
+    const logo = document.getElementById('new-game-logo').value.trim() || '🎮';
+    const description = document.getElementById('new-game-desc').value.trim();
+
+    if (!name) { showToast('请输入游戏名称', 'error'); return; }
+    if (!code) { showToast('请输入游戏代码', 'error'); return; }
+
+    try {
+        const data = await apiPost('/api/games', { name, code, logo, description });
+        showToast('✅ ' + data.message, 'success');
+        closeAddGameModal();
+        loadGamesView();
+        updateGameSwitcher();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+    }
+}
+
+// ─── Schedule / Attendance ───────────────────────────────────────
+
+const DAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+async function loadScheduleView() {
+    loadAttendance();
+    loadWeeklySchedule();
+}
+
+async function loadAttendance() {
+    try {
+        const data = await apiGet('/api/shifts/attendance');
+        document.getElementById('attendance-date').textContent =
+            `📆 ${data.date}（${DAY_NAMES[data.weekday]}）· 共 ${data.total_on_shift} 人值班`;
+
+        // Alerts section
+        const alertsDiv = document.getElementById('attendance-alerts');
+        if (data.alerts && data.alerts.length > 0) {
+            let alertHtml = '<div style="background:var(--bg-warning,#fff3cd);border:1px solid var(--border-warning,#ffc107);border-radius:8px;padding:12px 16px">';
+            alertHtml += '<div style="font-weight:600;margin-bottom:8px">⚠️ 需关注</div>';
+            for (const a of data.alerts) {
+                alertHtml += `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+                    <span>${a.agent_avatar}</span>
+                    <span style="font-weight:500">${a.agent_name}</span>
+                    <span style="color:var(--accent-red);font-size:13px">${a.status_label}</span>
+                    <span style="color:var(--text-muted);font-size:12px">排班 ${a.shift_time}</span>
+                </div>`;
+            }
+            alertHtml += '</div>';
+            alertsDiv.innerHTML = alertHtml;
+        } else if (data.total_on_shift > 0) {
+            alertsDiv.innerHTML = '<div style="background:var(--bg-success,#d4edda);border:1px solid var(--border-success,#28a745);border-radius:8px;padding:12px 16px;color:var(--text-success,#155724)">✅ 所有值班人员均已按时登录</div>';
+        } else {
+            alertsDiv.innerHTML = '<div style="padding:12px;color:var(--text-muted);text-align:center">📅 今日无排班</div>';
+        }
+
+        // Attendance table
+        const wrap = document.getElementById('attendance-table-wrap');
+        if (data.attendance && data.attendance.length > 0) {
+            let tbl = '<table class="data-table"><thead><tr><th>客服</th><th>姓名</th><th>排班时间</th><th>状态</th><th>登录时间</th></tr></thead><tbody>';
+            for (const a of data.attendance) {
+                let statusClass = 'tag-medium';
+                if (a.status_label.startsWith('✅')) statusClass = 'tag-success';
+                else if (a.status_label.startsWith('⚠️')) statusClass = 'tag-urgent';
+                const timeStr = a.login_time ? new Date(a.login_time).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'}) : '--';
+                tbl += `<tr>
+                    <td style="font-size:20px;text-align:center">${a.agent_avatar}</td>
+                    <td style="font-weight:500">${a.agent_name}</td>
+                    <td>${a.shift_time}</td>
+                    <td><span class="tag ${statusClass}">${a.status_label}</span></td>
+                    <td style="color:var(--text-muted)">${timeStr}</td>
+                </tr>`;
+            }
+            tbl += '</tbody></table>';
+            wrap.innerHTML = tbl;
+        } else {
+            wrap.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">今日无排班数据</div>';
+        }
+    } catch (e) {
+        showToast('❌ 加载出勤失败', 'error');
+    }
+}
+
+async function loadWeeklySchedule() {
+    try {
+        const data = await apiGet('/api/shifts');
+        const grid = document.getElementById('schedule-grid');
+
+        // Build a matrix: shifts grouped by agent, then by day
+        const agentsMap = {};
+        for (const s of data.shifts) {
+            if (!agentsMap[s.agent_id]) {
+                agentsMap[s.agent_id] = {name: s.agent_name, avatar: s.agent_avatar, shifts: {}};
+                for (let d = 0; d < 7; d++) agentsMap[s.agent_id].shifts[d] = [];
+            }
+            agentsMap[s.agent_id].shifts[s.day_of_week].push(s);
+        }
+
+        const agentIds = Object.keys(agentsMap);
+        if (agentIds.length === 0) {
+            grid.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">暂无排班数据</div>';
+            return;
+        }
+
+        let html = '<table class="data-table"><thead><tr><th>客服</th>';
+        for (let d = 0; d < 7; d++) {
+            const isToday = new Date().getDay() === (d + 1) % 7;
+            html += `<th${isToday ? ' style="background:var(--accent-blue);color:white;border-radius:4px"' : ''}>${DAY_NAMES[d]}</th>`;
+        }
+        html += '<th style="width:50px">操作</th></tr></thead><tbody>';
+
+        for (const aid of agentIds) {
+            const agent = agentsMap[aid];
+            html += `<tr><td style="font-weight:500">${agent.avatar} ${agent.name}</td>`;
+            for (let d = 0; d < 7; d++) {
+                const shifts = agent.shifts[d] || [];
+                if (shifts.length > 0) {
+                    const timeStr = shifts.map(s => `${s.start_time}-${s.end_time}`).join('<br>');
+                    html += `<td style="font-size:12px;text-align:center">${timeStr}</td>`;
+                } else {
+                    html += '<td style="color:var(--text-muted);font-size:12px;text-align:center">—</td>';
+                }
+            }
+            html += `<td>${window._isSuperAdmin ? `<button class="btn btn-sm" style="border-color:var(--accent-red);color:var(--accent-red);font-size:11px;padding:2px 6px" onclick="deleteAgentShifts(${aid})">清除</button>` : ''}</td>`;
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        grid.innerHTML = html;
+    } catch (e) {
+        document.getElementById('schedule-grid').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">加载失败</div>';
+    }
+}
+
+async function deleteAgentShifts(agentId) {
+    if (!confirm('确定清除该客服的所有排班？')) return;
+    try {
+        const data = await apiGet('/api/shifts?agent_id=' + agentId);
+        for (const s of data.shifts) {
+            await apiDelete('/api/shifts/' + s.id);
+        }
+        showToast('✅ 排班已清除', 'success');
+        loadWeeklySchedule();
+    } catch (e) {
+        showToast('❌ 清除失败', 'error');
+    }
+}
+
+function showAddShiftModal() {
+    // Create modal on the fly
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:380px;background:var(--bg-card);border-radius:var(--radius-lg);padding:24px">
+            <h3 style="margin:0 0 16px">➕ 添加排班</h3>
+            <div style="display:flex;flex-direction:column;gap:10px">
+                <select id="shift-agent-select" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px"></select>
+                <select id="shift-day-select" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px">
+                    ${DAY_NAMES.map((n,i) => `<option value="${i}">${n}</option>`).join('')}
+                </select>
+                <div style="display:flex;gap:8px">
+                    <input type="time" id="shift-start" value="09:00" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px">
+                    <span style="line-height:36px;color:var(--text-muted)">至</span>
+                    <input type="time" id="shift-end" value="18:00" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px">
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <button class="btn btn-primary" onclick="submitNewShift(this)" style="flex:1">确定添加</button>
+                    <button class="btn" onclick="this.closest('.modal-overlay').remove()" style="flex:1">取消</button>
+                </div>
+            </div>
+        </div>`;
+
+    document.body.appendChild(overlay);
+
+    // Load agents into select
+    apiGet('/api/agents').then(d => {
+        const sel = document.getElementById('shift-agent-select');
+        if (d && d.agents) {
+            sel.innerHTML = d.agents.filter(a => a.is_active).map(a =>
+                `<option value="${a.id}">${a.avatar} ${a.name}</option>`
+            ).join('');
+        }
+    }).catch(() => {});
+}
+
+async function submitNewShift(btn) {
+    const agentId = document.getElementById('shift-agent-select').value;
+    const dayOfWeek = parseInt(document.getElementById('shift-day-select').value);
+    const startTime = document.getElementById('shift-start').value;
+    const endTime = document.getElementById('shift-end').value;
+
+    if (!agentId) { showToast('请选择客服', 'error'); return; }
+    if (!startTime || !endTime) { showToast('请选择时间', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = '添加中...';
+
+    try {
+        await apiPost('/api/shifts', {
+            agent_id: parseInt(agentId),
+            day_of_week: dayOfWeek,
+            start_time: startTime,
+            end_time: endTime,
+        });
+        showToast('✅ 排班已添加', 'success');
+        btn.closest('.modal-overlay').remove();
+        loadWeeklySchedule();
+        loadAttendance();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+        btn.disabled = false;
+        btn.textContent = '确定添加';
+    }
 }
 
 async function initLiveChat() {
@@ -1606,6 +2000,10 @@ async function loadUsers() {
             const isSelf = currentUser && currentUser.id === u.id;
             const roleBadge = u.role === 'super_admin'
                 ? '<span class="tag tag-urgent">超级管理员</span>'
+                : u.role === 'project_manager'
+                ? '<span class="tag tag-primary">项目主管</span>'
+                : u.role === 'project_assistant'
+                ? '<span class="tag tag-info">项目助理</span>'
                 : '<span class="tag tag-medium">客服人员</span>';
             const statusBadge = u.is_active
                 ? '<span style="color:var(--accent-green)">● 启用</span>'
