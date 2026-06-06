@@ -20,6 +20,7 @@ from translation_service import (
     translate, detect_language, suggest_reply,
     get_language_name, get_language_flag, LANGUAGE_MAP,
 )
+import facebook_news
 
 app = FastAPI(title="Game CS Manager", version="1.0.0")
 
@@ -1339,6 +1340,56 @@ def get_chat_token(ticket_id: str, db: Session = Depends(get_db)):
         "player_language": player.language if player else "zh-CN",
         "ai_mode": ticket.ai_mode,
     }
+
+
+# ─── Facebook Gaming News API ───────────────────────────────────────
+
+
+@app.get("/api/facebook/config")
+def get_facebook_config():
+    """获取 Facebook API 配置状态。"""
+    return {
+        "configured": facebook_news.is_configured(),
+        "proxy": facebook_news._config.proxy,
+    }
+
+
+@app.post("/api/facebook/config")
+def set_facebook_config(data: dict):
+    """配置 Facebook App 凭据和代理。
+    {
+        "app_id": "xxx",
+        "app_secret": "xxx",
+        "proxy": "http://127.0.0.1:7890"
+    }
+    """
+    app_id = data.get("app_id", "")
+    app_secret = data.get("app_secret", "")
+    proxy = data.get("proxy")
+    facebook_news.set_config(app_id=app_id, app_secret=app_secret, proxy=proxy)
+    return {"status": "ok", "message": "Facebook 配置已更新"}
+
+
+@app.get("/api/facebook/news")
+def get_facebook_gaming_news():
+    """获取游戏行业 Facebook 热点新闻。"""
+    result = facebook_news.get_gaming_hot_news()
+    return result
+
+
+@app.get("/api/facebook/news/search")
+def search_facebook_gaming_news(q: str = "gaming news", limit: int = 5):
+    """搜索游戏相关 Facebook 主页。"""
+    pages = facebook_news.search_gaming_pages(query=q, limit=limit)
+    return {"pages": pages}
+
+
+@app.post("/api/facebook/test")
+def test_facebook_connection(data: dict):
+    """测试 Facebook API 连接。"""
+    proxy = data.get("proxy")
+    result = facebook_news.test_connection(proxy=proxy)
+    return result
 
 
 # -- Serve Frontend --

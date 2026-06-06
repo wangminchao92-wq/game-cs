@@ -50,6 +50,10 @@
                     <span class="nav-icon">🔌</span>
                     <span>开放API</span>
                 </div>
+                <div class="nav-item" data-view="facebook" onclick="switchView('facebook')">
+                    <span class="nav-icon">📰</span>
+                    <span>Facebook热点</span>
+                </div>
             </nav>
             <div class="sidebar-footer">
                 <div class="version">南京云霞飞信息技术有限公司 © 2026</div>
@@ -330,6 +334,40 @@
                                 <textarea id="livechat-input" placeholder="输入消息..." style="flex:1;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px;resize:none;height:40px;outline:none;font-family:inherit" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendLiveChatMsg()}"></textarea>
                                 <button class="btn btn-primary" onclick="sendLiveChatMsg()" style="align-self:flex-end">发送</button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ FACEBOOK NEWS ═══ -->
+                <div id="view-facebook" class="view">
+                    <div class="card" style="margin-bottom:16px">
+                        <div class="card-header">
+                            <h3>⚙️ Facebook 配置</h3>
+                            <div style="font-size:12px;color:var(--text-muted)">配置后自动获取游戏行业热点新闻</div>
+                        </div>
+                        <div class="card-body" id="fb-config-panel">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+                                <input type="text" id="fb-app-id" placeholder="App ID" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary)">
+                                <input type="password" id="fb-app-secret" placeholder="App Secret" style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary)">
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+                                <input type="text" id="fb-proxy" placeholder="代理地址（可选，如 http://127.0.0.1:7890）" style="flex:1;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary)">
+                                <button class="btn btn-secondary" onclick="testFbConnection()">🔌 测试连接</button>
+                                <button class="btn btn-primary" onclick="saveFbConfig()">💾 保存</button>
+                            </div>
+                            <div id="fb-config-status" style="font-size:13px;color:var(--text-muted)"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📰 游戏行业热点新闻</h3>
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <button class="btn btn-sm btn-secondary" onclick="refreshFbNews()">🔄 刷新</button>
+                                <span id="fb-news-count" style="font-size:12px;color:var(--text-muted)">0 条</span>
+                            </div>
+                        </div>
+                        <div class="card-body" id="fb-news-list">
+                            <div style="text-align:center;padding:40px;color:var(--text-muted)">点击刷新获取最新游戏热点新闻 📰</div>
                         </div>
                     </div>
                 </div>

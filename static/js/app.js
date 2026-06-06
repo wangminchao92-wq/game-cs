@@ -850,7 +850,7 @@ function switchView(view) {
     const titles = {
         dashboard: '📊 工作台', tickets: '🎫 工单管理', players: '👥 玩家查询',
         knowledge: '📚 知识库', analytics: '📈 数据分析', team: '👨‍👩‍👧‍👦 团队管理',
-        livechat: '💬 实时聊天',
+        livechat: '💬 实时聊天', facebook: '📰 Facebook热点',
     };
     document.getElementById('view-title').textContent = titles[view] || view;
 
@@ -861,6 +861,7 @@ function switchView(view) {
     else if (view === 'analytics') loadAnalytics();
     else if (view === 'team') loadTeam();
     else if (view === 'livechat') initLiveChat();
+    else if (view === 'facebook') initFbNews();
 }
 
 async function initLiveChat() {
@@ -1231,4 +1232,149 @@ async function sendLiveChatMsg() {
 }
 
 // Patch: add livechat to switchView titles
-const origSwitchView = window.switchView;
+
+// ═══ FACEBOOK NEWS ═══════════════════════════════════════════════════
+
+async function initFbNews() {
+    await loadFbConfig();
+    await refreshFbNews();
+}
+
+async function loadFbConfig() {
+    try {
+        const data = await apiGet('/api/facebook/config');
+        if (data.configured) {
+            document.getElementById('fb-config-status').textContent =
+                '✅ 已配置 Facebook App，代理: ' + (data.proxy || '无');
+        } else {
+            document.getElementById('fb-config-status').textContent =
+                '⚠️ 未配置，请输入 Facebook App ID 和 App Secret';
+        }
+    } catch (e) {
+        console.error('Load FB config error:', e);
+    }
+}
+
+async function saveFbConfig() {
+    const appId = document.getElementById('fb-app-id').value.trim();
+    const appSecret = document.getElementById('fb-app-secret').value.trim();
+    const proxy = document.getElementById('fb-proxy').value.trim() || null;
+    
+    if (!appId || !appSecret) {
+        showToast('⚠️ 请填写 App ID 和 App Secret', 'error');
+        return;
+    }
+    
+    try {
+        const r = await fetch(API + '/api/facebook/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({app_id: appId, app_secret: appSecret, proxy: proxy}),
+        });
+        const data = await r.json();
+        showToast('✅ ' + data.message, 'success');
+        document.getElementById('fb-config-status').textContent =
+            '✅ 已保存，代理: ' + (proxy || '无');
+    } catch (e) {
+        showToast('❌ 保存失败: ' + e.message, 'error');
+    }
+}
+
+async function testFbConnection() {
+    const proxy = document.getElementById('fb-proxy').value.trim() || null;
+    const status = document.getElementById('fb-config-status');
+    status.textContent = '🔄 测试连接中...';
+    
+    try {
+        const r = await fetch(API + '/api/facebook/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({proxy: proxy}),
+        });
+        const data = await r.json();
+        status.textContent = data.status === 'ok' ? '✅ ' + data.message : '❌ ' + data.message;
+        showToast(data.status === 'ok' ? '✅ 连接成功' : '❌ 连接失败', data.status === 'ok' ? 'success' : 'error');
+    } catch (e) {
+        status.textContent = '❌ 测试失败: ' + e.message;
+    }
+}
+
+async function refreshFbNews() {
+    const list = document.getElementById('fb-news-list');
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">🔄 加载中...</div>';
+    
+    try {
+        const data = await apiGet('/api/facebook/news');
+        
+        if (data.needs_config) {
+            document.getElementById('fb-config-status').textContent =
+                '⚠️ ' + data.message;
+        }
+        
+        document.getElementById('fb-news-count').textContent = data.total_news + ' 条';
+        renderFbNews(data);
+    } catch (e) {
+        list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--color-error)">❌ 加载失败: ' + e.message + '</div>';
+    }
+}
+
+function renderFbNews(data) {
+    const list = document.getElementById('fb-news-list');
+    
+    if (!data.news || data.news.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+        return;
+    }
+    
+    let html = '';
+    for (const item of data.news) {
+        const isPlaceholder = item.is_placeholder;
+        const avatar = item.image
+            ? `<img src="${item.image}" style="width:48px;height:48px;border-radius:8px;object-fit:cover;flex-shrink:0">`
+            : `<div style="width:48px;height:48px;border-radius:8px;background:var(--bg-input);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">📰</div>`;
+        
+        const time = item.created_time
+            ? new Date(item.created_time).toLocaleString('zh-CN')
+            : '';
+        
+        const url = item.url || `https://www.facebook.com/${item.page_id}`;
+        
+        let stats = '';
+        if (!isPlaceholder) {
+            const parts = [];
+            if (item.likes > 0) parts.push(`❤️ ${item.likes}`);
+            if (item.comments > 0) parts.push(`💬 ${item.comments}`);
+            if (item.shares > 0) parts.push(`🔄 ${item.shares}`);
+            if (parts.length) stats = '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' + parts.join(' · ') + '</div>';
+        }
+        
+        html += `
+            <div style="display:flex;gap:12px;padding:12px;border-bottom:1px solid var(--border);transition:background 0.2s" 
+                 onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">
+                ${avatar}
+                <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                        <span style="font-size:12px;color:var(--accent-blue);font-weight:600">${item.page_name}</span>
+                        ${isPlaceholder ? '<span style="font-size:10px;background:var(--accent-yellow);color:#000;padding:1px 6px;border-radius:4px">媒体列表</span>' : ''}
+                    </div>
+                    <div style="font-size:13px;color:var(--text-primary);line-height:1.5;${item.message.length > 200 ? 'max-height:60px;overflow:hidden' : ''}">
+                        ${escapeHtml(item.message || item.story || '（无内容）')}
+                    </div>
+                    ${stats}
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+                        <span style="font-size:11px;color:var(--text-muted)">${time}</span>
+                        <a href="${url}" target="_blank" style="font-size:11px;color:var(--accent-blue);text-decoration:none">查看原文 →</a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    list.innerHTML = html;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
