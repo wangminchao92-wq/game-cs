@@ -882,39 +882,96 @@ async function loadTeam() {
 
 // ─── Agent CRUD ───
 
+let selectedAgentAvatar = '👤';
+let uploadedAvatarUrl = null;
+
 function showAddAgentForm() {
     document.getElementById('add-agent-modal').style.display = 'flex';
     document.getElementById('new-agent-name').value = '';
     document.getElementById('new-agent-email').value = '';
     document.getElementById('new-agent-role').value = 'agent';
+    document.getElementById('new-agent-password').value = '';
     // Reset avatar selection
     document.querySelectorAll('#avatar-picker .avatar-option').forEach(el => el.classList.remove('selected'));
     document.querySelector('#avatar-picker .avatar-option:first-child').classList.add('selected');
+    selectedAgentAvatar = '👤';
+    uploadedAvatarUrl = null;
+    document.getElementById('avatar-upload-preview').style.display = 'none';
+    document.getElementById('avatar-preview-img').src = '';
+    document.getElementById('agent-avatar-upload').value = '';
 }
 
 function closeAddAgentModal() {
     document.getElementById('add-agent-modal').style.display = 'none';
 }
 
-let selectedAgentAvatar = '👤';
-
 function selectAgentAvatar(el) {
     document.querySelectorAll('#avatar-picker .avatar-option').forEach(e => e.classList.remove('selected'));
     el.classList.add('selected');
     selectedAgentAvatar = el.textContent;
+    // Clear uploaded avatar if user picks an emoji
+    uploadedAvatarUrl = null;
+    document.getElementById('avatar-upload-preview').style.display = 'none';
+}
+
+async function handleAvatarUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    // Preview locally
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        document.getElementById('avatar-preview-img').src = e.target.result;
+        document.getElementById('avatar-upload-preview').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+
+    // Upload to server
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const token = getToken();
+        const r = await fetch('/api/upload/avatar', {
+            method: 'POST',
+            headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+            body: formData,
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || '上传失败');
+        const data = await r.json();
+        uploadedAvatarUrl = data.url;
+        // Deselect emoji selection
+        document.querySelectorAll('#avatar-picker .avatar-option').forEach(e => e.classList.remove('selected'));
+        showToast('✅ 头像已上传', 'success');
+    } catch (e) {
+        showToast('❌ 头像上传失败: ' + e.message, 'error');
+    }
+}
+
+function clearAvatarUpload() {
+    uploadedAvatarUrl = null;
+    document.getElementById('avatar-upload-preview').style.display = 'none';
+    document.getElementById('agent-avatar-upload').value = '';
+    // Re-select default emoji
+    document.querySelectorAll('#avatar-picker .avatar-option').forEach(e => e.classList.remove('selected'));
+    document.querySelector('#avatar-picker .avatar-option:first-child').classList.add('selected');
+    selectedAgentAvatar = '👤';
 }
 
 async function submitNewAgent() {
     const name = document.getElementById('new-agent-name').value.trim();
     const email = document.getElementById('new-agent-email').value.trim();
     const role = document.getElementById('new-agent-role').value;
+    const password = document.getElementById('new-agent-password').value.trim();
 
     if (!name) { showToast('请输入姓名', 'error'); return; }
     if (!email) { showToast('请输入邮箱', 'error'); return; }
+    if (!password || password.length < 6) { showToast('密码不能为空且至少6位', 'error'); return; }
+
+    const avatar = uploadedAvatarUrl || selectedAgentAvatar;
 
     try {
         const data = await apiPost('/api/agents', {
-            name, email, role, avatar: selectedAgentAvatar,
+            name, email, role, password, avatar,
         });
         showToast('✅ ' + data.message, 'success');
         closeAddAgentModal();
@@ -927,7 +984,7 @@ async function submitNewAgent() {
 }
 
 async function deleteAgent(id, name) {
-    if (!confirm(`确认删除客服 "${name}"？\n该客服负责的工单将解除指派。`)) return;
+    if (!confirm(`确认删除客服 "${name}"？\n该客服负责的工单将解除指派，登录账号也将被禁用。`)) return;
     try {
         const data = await apiDelete('/api/agents/' + id);
         showToast('✅ ' + data.message, 'success');
@@ -1620,7 +1677,7 @@ async function deleteUser(id, username) {
 
 // ═══ SETTINGS — Auto Reply ═══════════════════════════════════════
 
-async function loadSettings() {
+async function loadAutoReplyConfig() {
     try {
         const data = await apiGet('/api/settings/auto-reply');
         document.getElementById('auto-reply-toggle').checked = data.enabled === 'true';
@@ -1628,8 +1685,13 @@ async function loadSettings() {
         document.getElementById('auto-reply-end').value = String(data.end_hour);
         updateAutoReplyStatus(data);
     } catch (e) {
-        console.error('Load settings error:', e);
+        console.error('Load auto-reply config error:', e);
     }
+}
+
+function loadSettings() {
+    loadAutoReplyConfig();
+    loadLlmConfig();
 }
 
 function updateAutoReplyStatus(data) {
@@ -1680,6 +1742,97 @@ async function saveAutoReplyConfig() {
         try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
         showToast('❌ ' + msg, 'error');
         statusEl.textContent = '保存失败';
+    }
+}
+
+const LLM_PROVIDER_DEFAULTS = {
+    deepseek_api: { base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    local_deepseek: { base_url: '', model: 'deepseek-chat' },
+    openai: { base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    custom: { base_url: '', model: '' },
+};
+
+function loadLlmConfig() {
+    apiGet('/api/settings/llm').then(data => {
+        document.getElementById('llm-provider').value = data.provider;
+        document.getElementById('llm-base-url').value = data.base_url || '';
+        document.getElementById('llm-model').value = data.model || '';
+        document.getElementById('llm-use-kb').checked = data.use_kb === 'true';
+        onLlmProviderChange();
+    }).catch(e => {
+        console.error('Load LLM config error:', e);
+    });
+}
+
+function onLlmProviderChange() {
+    const provider = document.getElementById('llm-provider').value;
+    const defaults = LLM_PROVIDER_DEFAULTS[provider] || {};
+    const baseUrlEl = document.getElementById('llm-base-url');
+    const modelEl = document.getElementById('llm-model');
+    // Only auto-fill if current values are empty or match a previous default
+    if (!baseUrlEl.value.trim() || Object.values(LLM_PROVIDER_DEFAULTS).some(d => d.base_url === baseUrlEl.value.trim())) {
+        baseUrlEl.placeholder = defaults.base_url || '输入 API 地址';
+        if (defaults.base_url) baseUrlEl.value = defaults.base_url;
+    }
+    if (!modelEl.value.trim() || Object.values(LLM_PROVIDER_DEFAULTS).some(d => d.model === modelEl.value.trim())) {
+        modelEl.placeholder = defaults.model || '输入模型名称';
+        if (defaults.model) modelEl.value = defaults.model;
+    }
+}
+
+function toggleLlmKeyVisibility() {
+    const el = document.getElementById('llm-api-key');
+    el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+async function saveLlmConfig() {
+    const provider = document.getElementById('llm-provider').value;
+    const baseUrl = document.getElementById('llm-base-url').value.trim();
+    const model = document.getElementById('llm-model').value.trim();
+    const apiKey = document.getElementById('llm-api-key').value.trim();
+    const useKb = document.getElementById('llm-use-kb').checked;
+    const statusEl = document.getElementById('llm-config-status');
+
+    statusEl.textContent = '保存中...';
+
+    try {
+        const body = { provider, base_url: baseUrl, model, use_kb: useKb };
+        if (apiKey) body.api_key = apiKey;
+
+        const data = await apiPost('/api/settings/llm', body);
+        showToast('✅ ' + data.message, 'success');
+        statusEl.textContent = '已保存' + (data.api_key_masked ? ' (Key: ' + data.api_key_masked + ')' : '');
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+        statusEl.textContent = '保存失败';
+    }
+}
+
+async function testLlmConfig() {
+    const resultEl = document.getElementById('llm-test-result');
+    resultEl.style.display = 'block';
+    resultEl.style.background = 'rgba(88,166,255,0.1)';
+    resultEl.style.border = '1px solid var(--accent-blue)';
+    resultEl.textContent = '⏳ 正在测试连接 ...';
+
+    try {
+        const data = await apiPost('/api/translate', {
+            text: 'Hello, this is a test message.',
+            target_lang: 'zh-CN',
+        });
+        resultEl.style.background = 'rgba(67,181,129,0.15)';
+        resultEl.style.border = '1px solid var(--accent-green)';
+        resultEl.innerHTML = '<strong>✅ 翻译服务正常</strong><br><br>' +
+            '原文: ' + escapeHtml(data.original) + '<br>' +
+            '翻译: ' + escapeHtml(data.translated);
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        resultEl.style.background = 'rgba(239,83,80,0.15)';
+        resultEl.style.border = '1px solid var(--accent-red)';
+        resultEl.textContent = '❌ 连接失败: ' + msg;
     }
 }
 

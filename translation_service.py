@@ -224,8 +224,98 @@ def detect_language(text: str) -> str:
 
 # ─── AI Reply Suggestion ──────────────────────────────────────────
 
+# LLM provider constants
+PROVIDER_DEEPSEEK_API = "deepseek_api"    # api.deepseek.com (paid)
+PROVIDER_LOCAL_DEEPSEEK = "local_deepseek"  # Local/self-hosted DeepSeek
+PROVIDER_OPENAI = "openai"                 # OpenAI API
+PROVIDER_CUSTOM = "custom"                 # Any OpenAI-compatible endpoint
+
+DEFAULT_CONFIGS = {
+    PROVIDER_DEEPSEEK_API: {
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+    },
+    PROVIDER_LOCAL_DEEPSEEK: {
+        "base_url": "http://localhost:8000/v1",
+        "model": "deepseek-chat",
+    },
+    PROVIDER_OPENAI: {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+}
+
+
+def _build_llm_config(api_config: dict = None) -> dict:
+    """构建LLM配置，优先使用参数传入的配置，否则从环境变量读取（向后兼容）"""
+    if api_config:
+        return api_config
+
+    provider = os.environ.get("LLM_PROVIDER", PROVIDER_DEEPSEEK_API)
+    base_url = os.environ.get("LLM_BASE_URL", "")
+    model = os.environ.get("LLM_MODEL", "")
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+
+    # Try .env file fallback
+    if not api_key:
+        api_key = _get_deepseek_api_key()
+
+    # Fill defaults
+    defaults = DEFAULT_CONFIGS.get(provider, DEFAULT_CONFIGS[PROVIDER_DEEPSEEK_API])
+    if not base_url:
+        base_url = defaults["base_url"]
+    if not model:
+        model = defaults["model"]
+
+    return {
+        "provider": provider,
+        "base_url": base_url,
+        "model": model,
+        "api_key": api_key,
+    }
+
+
+def _llm_chat_completion(config: dict, messages: list, temperature: float = 0.3, max_tokens: int = 1500) -> dict:
+    """统一调用各类 LLM 提供商（OpenAI 兼容接口）"""
+    if not _HAS_REQUESTS:
+        raise RuntimeError("requests 库未安装，无法使用 AI 回复功能")
+
+    api_key = config.get("api_key", "")
+    base_url = config.get("base_url", DEFAULT_CONFIGS[PROVIDER_DEEPSEEK_API]["base_url"])
+    model = config.get("model", DEFAULT_CONFIGS[PROVIDER_DEEPSEEK_API]["model"])
+    provider = config.get("provider", PROVIDER_DEEPSEEK_API)
+
+    # Remove trailing slash
+    base_url = base_url.rstrip("/")
+
+    # For local deployments, don't require API key if endpoint is localhost
+    if not api_key and provider == PROVIDER_LOCAL_DEEPSEEK:
+        api_key = "sk-local"  # Some local servers require a placeholder key
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    resp = requests.post(
+        f"{base_url}/chat/completions",
+        headers=headers,
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    content = result["choices"][0]["message"]["content"]
+    return json.loads(content)
+
+
 def _get_deepseek_api_key() -> str:
-    """Try to find DeepSeek API key."""
+    """(Legacy) Try to find DeepSeek API key from env or .env file."""
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if key:
         return key
@@ -249,27 +339,36 @@ def suggest_reply(
     conversation_history: list,
     player_language: str = "pt-BR",
     agent_language: str = "zh-CN",
+    kb_context: str = "",
+    api_config: dict = None,
 ) -> dict:
-    """Generate AI-suggested reply (DeepSeek API with template fallback)."""
-    api_key = _get_deepseek_api_key()
+    """Generate AI-suggested reply.
+    
+    支持多种 LLM 提供商配置 + 知识库 RAG 增强。
+    如果未提供 api_config，则从环境变量读取（向后兼容）。
+    如果 kb_context 不为空，会将其作为参考信息注入提示词。
+    """
+    config = _build_llm_config(api_config)
 
-    if api_key and _HAS_REQUESTS:
+    # Try configured LLM provider
+    if config.get("api_key") or config.get("provider") == PROVIDER_LOCAL_DEEPSEEK:
         try:
-            return _suggest_via_deepseek(
+            return _suggest_via_llm(
                 ticket_title, ticket_description, conversation_history,
-                player_language, agent_language, api_key,
+                player_language, agent_language, config, kb_context,
             )
         except Exception as e:
             print(f"[AI Suggestion API Error] {e}")
 
+    # Fallback to template-based
     return _suggest_fallback(
         ticket_title, ticket_description, conversation_history,
         player_language, agent_language,
     )
 
 
-def _suggest_via_deepseek(title, desc, history, player_lang, agent_lang, api_key):
-    """Generate suggestion using DeepSeek API."""
+def _suggest_via_llm(title, desc, history, player_lang, agent_lang, config, kb_context=""):
+    """Generate suggestion using configured LLM provider."""
     player_lang_name = get_language_name(player_lang)
 
     context_parts = [f"## 工单标题\n{title}", f"## 工单描述\n{desc}"]
@@ -278,33 +377,34 @@ def _suggest_via_deepseek(title, desc, history, player_lang, agent_lang, api_key
         for msg in history[-10:]:
             flag = get_language_flag(msg.get("language", "zh-CN"))
             context_parts.append(f"- {msg['sender']} ({flag}): {msg['content']}")
+    if kb_context:
+        context_parts.append(kb_context)
     context = "\n\n".join(context_parts)
 
     system_prompt = (
         "你是一个专业的游戏客服AI助手。请根据工单信息用中文写一段客服回复。\n"
         f"玩家的语言是：{player_lang_name}\n"
-        "回复要专业、友好、有同理心。\n\n"
-        '请仅输出JSON格式：\n'
+        "回复要专业、友好、有同理心。\n"
+    )
+    if kb_context:
+        system_prompt += (
+            "\n参考知识库中的相关文章来回答，确保回复准确。\n"
+            "如果知识库中有相关内容，优先参考；如果无关则忽略。\n"
+        )
+    system_prompt += (
+        '\n请仅输出JSON格式：\n'
         '{"reply_zh": "中文回复","suggested_action": "send_message","confidence": 0.9}'
     )
 
-    resp = requests.post(
-        "https://api.deepseek.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": context},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1500,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=30,
+    result = _llm_chat_completion(
+        config,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": context},
+        ],
+        temperature=0.3,
+        max_tokens=1500,
     )
-    resp.raise_for_status()
-    result = json.loads(resp.json()["choices"][0]["message"]["content"])
 
     reply_zh = result.get("reply_zh", "")
     reply_translated = ""

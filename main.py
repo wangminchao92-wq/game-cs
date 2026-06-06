@@ -4,11 +4,17 @@ import random
 import string
 import asyncio
 import json
+import os
+import uuid
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+AVATAR_DIR = os.path.join(UPLOAD_DIR, "avatars")
+os.makedirs(AVATAR_DIR, exist_ok=True)
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, desc
 
@@ -154,7 +160,7 @@ manager = ConnectionManager()
 # ─── Helper: AI suggestion generator (sync, for WebSocket use) ───
 
 
-def _generate_suggestion_sync(ticket, player_language):
+def _generate_suggestion_sync(ticket, player_language, db: Session = None):
     """Synchronously generate AI suggestion for a ticket. Used by WebSocket."""
     from translation_service import suggest_reply
     
@@ -168,12 +174,21 @@ def _generate_suggestion_sync(ticket, player_language):
             "language": lang,
         })
     
+    # Build LLM config + KB context from DB (if available)
+    api_config = _build_llm_api_config_from_db(db) if db else None
+    kb_context = ""
+    if db and get_setting(db, "llm_use_kb", "true") == "true":
+        search_text = ticket.title + " " + ticket.description
+        kb_context = _search_kb_for_context(db, search_text)
+    
     return suggest_reply(
         ticket_title=ticket.title,
         ticket_description=ticket.description,
         conversation_history=history,
         player_language=player_language,
         agent_language="zh-CN",
+        kb_context=kb_context,
+        api_config=api_config,
     )
 
 
@@ -814,28 +829,68 @@ def list_agents(db: Session = Depends(get_db)):
 
 @app.post("/api/agents")
 def create_agent(data: dict, db: Session = Depends(get_db)):
-    """新增客服人员"""
+    """新增客服人员，自动创建系统登录账号"""
     name = data.get("name", "").strip()
     email = data.get("email", "").strip()
     role = data.get("role", "agent")
     avatar = data.get("avatar", "👤")
+    password = data.get("password", "").strip()
 
     if not name or not email:
         raise HTTPException(status_code=400, detail="姓名和邮箱不能为空")
+    if not password:
+        raise HTTPException(status_code=400, detail="密码不能为空")
 
     existing = db.query(Agent).filter(Agent.email == email).first()
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被使用")
 
-    agent = Agent(name=name, email=email, role=role, avatar=avatar)
+    # 如果上传了头像图片，保存URL路径
+    if avatar and (avatar.startswith("/uploads/") or avatar.startswith("http")):
+        avatar_url = avatar
+    else:
+        avatar_url = avatar  # emoji
+
+    agent = Agent(name=name, email=email, role=role, avatar=avatar_url)
     db.add(agent)
+    db.flush()  # 获取 agent.id
+
+    # 同时创建用户登录账号
+    existing_user = db.query(User).filter(User.username == email).first()
+    if not existing_user:
+        user = User(
+            username=email,
+            password_hash=hash_password(password),
+            display_name=name,
+            role="agent",
+            is_active=True,
+        )
+        db.add(user)
+
     db.commit()
     db.refresh(agent)
-    return {"status": "ok", "message": f"客服 '{name}' 已添加", "agent": {
+    return {"status": "ok", "message": f"客服 '{name}' 已添加（登录账号：{email}）", "agent": {
         "id": agent.id, "name": agent.name, "email": agent.email,
         "role": agent.role, "avatar": agent.avatar, "is_active": agent.is_active,
         "open_tickets": 0, "resolved_tickets": 0,
     }}
+
+
+@app.post("/api/upload/avatar")
+async def upload_avatar(file: UploadFile = File(...)):
+    """上传客服头像图片"""
+    ext = os.path.splitext(file.filename or "avatar.png")[1] or ".png"
+    if ext.lower() not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+        raise HTTPException(status_code=400, detail="仅支持 JPG/PNG/GIF/WebP 格式")
+    filename = f"avatar_{uuid.uuid4().hex[:12]}{ext}"
+    filepath = os.path.join(AVATAR_DIR, filename)
+    content = await file.read()
+    # Limit to 2MB
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片大小不能超过 2MB")
+    with open(filepath, "wb") as f:
+        f.write(content)
+    return {"url": f"/uploads/avatars/{filename}"}
 
 
 @app.delete("/api/agents/{agent_id}")
@@ -1003,12 +1058,21 @@ def ai_suggest_reply(ticket_id: str, db: Session = Depends(get_db)):
     player_lang = ticket.player.language if ticket.player else "zh-CN"
 
     try:
+        # Build LLM config + KB context
+        api_config = _build_llm_api_config_from_db(db)
+        kb_context = ""
+        if get_setting(db, "llm_use_kb", "true") == "true":
+            search_text = ticket.title + " " + ticket.description
+            kb_context = _search_kb_for_context(db, search_text)
+        
         suggestion = suggest_reply(
             ticket_title=ticket.title,
             ticket_description=ticket.description,
             conversation_history=history,
             player_language=player_lang,
             agent_language="zh-CN",
+            kb_context=kb_context,
+            api_config=api_config,
         )
         return suggestion
     except Exception as e:
@@ -1033,12 +1097,20 @@ def ai_auto_reply(ticket_id: str, data: dict, db: Session = Depends(get_db)):
         })
 
     player_lang = ticket.player.language if ticket.player else "zh-CN"
+    # Build LLM config + KB context
+    api_config = _build_llm_api_config_from_db(db)
+    kb_context = ""
+    if get_setting(db, "llm_use_kb", "true") == "true":
+        search_text = ticket.title + " " + ticket.description
+        kb_context = _search_kb_for_context(db, search_text)
     suggestion = suggest_reply(
         ticket_title=ticket.title,
         ticket_description=ticket.description,
         conversation_history=history,
         player_language=player_lang,
         agent_language="zh-CN",
+        kb_context=kb_context,
+        api_config=api_config,
     )
 
     reply_zh = suggestion.get("reply_zh", "")
@@ -1135,6 +1207,87 @@ def set_auto_reply_config(data: dict, user: User = Depends(require_super_admin),
     }
 
 
+# ─── LLM Provider Configuration ─────────────────────────────────
+
+
+@app.get("/api/settings/llm")
+def get_llm_config(db: Session = Depends(get_db)):
+    """获取 LLM 配置"""
+    return {
+        "provider": get_setting(db, "llm_provider", "deepseek_api"),
+        "base_url": get_setting(db, "llm_base_url", "https://api.deepseek.com/v1"),
+        "model": get_setting(db, "llm_model", "deepseek-chat"),
+        "use_kb": get_setting(db, "llm_use_kb", "true"),
+    }
+
+
+@app.post("/api/settings/llm")
+def set_llm_config(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """设置 LLM 配置（超级管理员）"""
+    provider = data.get("provider", "deepseek_api")
+    valid_providers = ["deepseek_api", "local_deepseek", "openai", "custom"]
+    if provider not in valid_providers:
+        raise HTTPException(400, f"不支持的服务商，可选: {', '.join(valid_providers)}")
+
+    set_setting(db, "llm_provider", provider)
+    set_setting(db, "llm_base_url", data.get("base_url", ""))
+    set_setting(db, "llm_model", data.get("model", ""))
+
+    # Only update API key if provided (don't overwrite with empty)
+    api_key = data.get("api_key", "")
+    if api_key:
+        set_setting(db, "llm_api_key", api_key)
+
+    # KB RAG setting
+    set_setting(db, "llm_use_kb", str(data.get("use_kb", True)).lower())
+
+    # Show masked key in response
+    stored_key = get_setting(db, "llm_api_key", "")
+    masked_key = stored_key[:4] + "****" + stored_key[-4:] if len(stored_key) > 8 else "****"
+
+    return {
+        "status": "ok",
+        "message": "AI 模型配置已保存",
+        "api_key_masked": masked_key,
+    }
+
+
+# ─── KB Utility for AI RAG ───────────────────────────────────────
+
+
+def _build_llm_api_config_from_db(db: Session) -> dict:
+    """从系统设置中读取 LLM 配置，返回 api_config 字典"""
+    from translation_service import PROVIDER_DEEPSEEK_API
+    return {
+        "provider": get_setting(db, "llm_provider", PROVIDER_DEEPSEEK_API),
+        "base_url": get_setting(db, "llm_base_url", ""),
+        "model": get_setting(db, "llm_model", ""),
+        "api_key": get_setting(db, "llm_api_key", ""),
+    }
+
+
+def _search_kb_for_context(db: Session, text: str, max_results: int = 3) -> str:
+    """搜索知识库相关文章，返回格式化上下文"""
+    query = db.query(KnowledgeArticle)
+    # Simple keyword matching on title + content
+    keywords = [w.strip() for w in text.replace(",", " ").replace("，", " ").split() if len(w.strip()) > 1]
+    if not keywords:
+        return ""
+    from sqlalchemy import or_
+    filters = []
+    for kw in keywords[:10]:  # limit to 10 keywords
+        filters.append(KnowledgeArticle.title.ilike(f"%{kw}%"))
+        filters.append(KnowledgeArticle.content.ilike(f"%{kw}%"))
+    articles = query.filter(or_(*filters)).order_by(desc(KnowledgeArticle.helpful_count)).limit(max_results).all()
+    if not articles:
+        return ""
+    parts = ["## 相关知识库文章（请参考）"]
+    for a in articles:
+        content_preview = a.content[:300].replace("\n", " ")
+        parts.append(f"- [{a.title}]({a.category}): {content_preview}...")
+    return "\n".join(parts)
+
+
 def _reply_to_ticket(ticket: Ticket, player_lang: str, db: Session) -> Optional[dict]:
     """生成 AI 回复并发送到工单（不依赖 WebSocket）"""
     history = []
@@ -1148,6 +1301,8 @@ def _reply_to_ticket(ticket: Ticket, player_lang: str, db: Session) -> Optional[
         conversation_history=history,
         player_language=player_lang,
         agent_language="zh-CN",
+        kb_context=_search_kb_for_context(db, ticket.title + " " + ticket.description) if get_setting(db, "llm_use_kb", "true") == "true" else "",
+        api_config=_build_llm_api_config_from_db(db),
     )
     reply_zh = suggestion.get("reply_zh", "")
     if not reply_zh:
@@ -1592,7 +1747,7 @@ async def websocket_chat(ws: WebSocket, ticket_id: str):
                     # Auto-generate AI suggestion (background task)
                     if ticket.ai_mode and player:
                         try:
-                            suggestion = _generate_suggestion_sync(ticket, player.language)
+                            suggestion = _generate_suggestion_sync(ticket, player.language, db)
                             if suggestion and suggestion.get("reply_zh"):
                                 # Broadcast AI suggestion to agents on this ticket
                                 await manager.send_to_ticket(ticket_id, {
@@ -1770,6 +1925,7 @@ def serve_api_docs():
     return FileResponse("static/api-docs.html")
 
 
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 

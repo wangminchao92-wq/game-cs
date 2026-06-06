@@ -338,14 +338,14 @@
 
                 <!-- ═══ ADD AGENT MODAL ═══ -->
                 <div id="add-agent-modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeAddAgentModal()">
-                    <div class="modal" style="max-width:420px">
+                    <div class="modal" style="max-width:460px">
                         <div class="modal-header">
                             <h3>添加客服人员</h3>
                             <span class="modal-close" onclick="closeAddAgentModal()">✕</span>
                         </div>
                         <div class="modal-body">
-                            <div class="form-group"><label>姓名</label><input type="text" id="new-agent-name" placeholder="如：张三"></div>
-                            <div class="form-group"><label>邮箱</label><input type="email" id="new-agent-email" placeholder="如：zhangsan@gamecs.com"></div>
+                            <div class="form-group"><label>姓名 *</label><input type="text" id="new-agent-name" placeholder="如：张三"></div>
+                            <div class="form-group"><label>邮箱 *</label><input type="email" id="new-agent-email" placeholder="如：zhangsan@gamecs.com（也是登录账号）"></div>
                             <div class="form-group">
                                 <label>角色</label>
                                 <select id="new-agent-role">
@@ -353,20 +353,39 @@
                                     <option value="supervisor">客服主管</option>
                                 </select>
                             </div>
+                            <div class="form-group"><label>密码 *</label><input type="password" id="new-agent-password" placeholder="设置登录密码（至少6位）"></div>
                             <div class="form-group">
-                                <label>头像表情</label>
-                                <div style="display:flex;gap:8px;flex-wrap:wrap" id="avatar-picker">
-                                    <span class="avatar-option selected" onclick="selectAgentAvatar(this)">👤</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">🧑‍💻</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">👩‍💼</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">🧙</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">🦸</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">🧑‍🚀</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">👨‍🏫</span>
-                                    <span class="avatar-option" onclick="selectAgentAvatar(this)">👩‍🔬</span>
+                                <label>头像</label>
+                                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                                    <!-- Default emoji avatars -->
+                                    <div style="display:flex;gap:6px;flex-wrap:wrap" id="avatar-picker">
+                                        <span class="avatar-option selected" onclick="selectAgentAvatar(this)">👤</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">🧑‍💻</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">👩‍💼</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">🧙</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">🦸</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">🧑‍🚀</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">👨‍🏫</span>
+                                        <span class="avatar-option" onclick="selectAgentAvatar(this)">👩‍🔬</span>
+                                    </div>
+                                    <!-- OR divider -->
+                                    <span style="color:var(--text-muted);font-size:12px;margin:0 4px">或</span>
+                                    <!-- Upload photo -->
+                                    <label class="avatar-upload-btn" onclick="event.stopPropagation()">
+                                        📷 上传照片
+                                        <input type="file" id="agent-avatar-upload" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" onchange="handleAvatarUpload(this)">
+                                    </label>
+                                </div>
+                                <!-- Upload preview -->
+                                <div id="avatar-upload-preview" style="display:none;margin-top:8px;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;display:none">
+                                    <div style="display:flex;align-items:center;gap:10px">
+                                        <img id="avatar-preview-img" style="width:40px;height:40px;border-radius:50%;object-fit:cover">
+                                        <span style="font-size:13px;color:var(--text-secondary)">已选择自定义头像</span>
+                                        <button onclick="clearAvatarUpload()" style="margin-left:auto;background:none;border:1px solid var(--accent-red);color:var(--accent-red);border-radius:4px;cursor:pointer;padding:2px 8px;font-size:12px">移除</button>
+                                    </div>
                                 </div>
                             </div>
-                            <button class="btn btn-primary" onclick="submitNewAgent()" style="width:100%">添加客服</button>
+                            <button class="btn btn-primary" onclick="submitNewAgent()" style="width:100%;margin-top:12px">添加客服（含登录账号）</button>
                         </div>
                     </div>
                 </div>
@@ -536,6 +555,55 @@
                                 AI自动回复的消息会标记为 <strong>"AI自动回复"</strong> 发送给玩家。<br>
                                 客服上线后可查看自动回复记录并继续人工跟进。
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ AI MODEL CONFIG ═══ -->
+                    <div class="card" style="margin-top:16px">
+                        <div class="card-header">
+                            <h3>🧠 AI 模型配置</h3>
+                            <div style="font-size:12px;color:var(--text-muted)">配置 AI 建议回复的 LLM 提供商和知识库 RAG</div>
+                        </div>
+                        <div class="card-body">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                                <div class="form-group">
+                                    <label>AI 提供商</label>
+                                    <select id="llm-provider" class="settings-select" onchange="onLlmProviderChange()">
+                                        <option value="deepseek_api">DeepSeek API（付费）</option>
+                                        <option value="local_deepseek">本地 DeepSeek（自部署）</option>
+                                        <option value="openai">OpenAI API</option>
+                                        <option value="custom">自定义（兼容 OpenAI）</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>模型名称</label>
+                                    <input type="text" id="llm-model" placeholder="如: deepseek-chat, gpt-4o-mini" style="width:100%;padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-primary);color:var(--text-primary);font-size:13px">
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top:12px">
+                                <label>API 地址</label>
+                                <input type="text" id="llm-base-url" placeholder="如: https://api.deepseek.com/v1 或 http://192.168.1.100:8000/v1" style="width:100%;padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-primary);color:var(--text-primary);font-size:13px">
+                            </div>
+                            <div class="form-group" style="margin-top:12px">
+                                <label>API Key</label>
+                                <div style="display:flex;gap:8px">
+                                    <input type="password" id="llm-api-key" placeholder="输入 API Key（留空则使用上次保存的）" style="flex:1;padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-primary);color:var(--text-primary);font-size:13px">
+                                    <button onclick="toggleLlmKeyVisibility()" style="background:none;border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;padding:0 12px;font-size:14px">👁</button>
+                                </div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding:8px 12px;background:var(--bg-hover);border-radius:var(--radius-sm)">
+                                <span style="font-size:13px">知识库 RAG（参考知识库文章增强回复）</span>
+                                <label class="toggle-switch" style="margin-left:auto">
+                                    <input type="checkbox" id="llm-use-kb" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div style="margin-top:16px;display:flex;align-items:center;gap:12px">
+                                <button class="btn btn-primary" onclick="saveLlmConfig()">💾 保存 AI 配置</button>
+                                <button class="btn btn-secondary" onclick="testLlmConfig()" style="padding:8px 16px;border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;background:var(--bg-secondary);color:var(--text-primary);font-size:13px">🔍 测试连接</button>
+                                <span id="llm-config-status" style="font-size:13px;color:var(--text-muted)"></span>
+                            </div>
+                            <div id="llm-test-result" style="margin-top:12px;padding:12px;border-radius:var(--radius-sm);font-size:13px;display:none"></div>
                         </div>
                     </div>
                 </div>

@@ -877,6 +877,25 @@ tbody tr:last-child td { border-bottom: none; }
     background: rgba(88,166,255,0.1);
 }
 
+.avatar-upload-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 14px;
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.avatar-upload-btn:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    background: rgba(88,166,255,0.05);
+}
+
 /* ═══ TOGGLE SWITCH ═══ */
 .toggle-switch {
     position: relative;
