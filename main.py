@@ -13,7 +13,7 @@ from sqlalchemy import func, extract, desc
 
 from database import init_db, get_db, SessionLocal
 from models import (
-    Base, Agent, Player, Ticket, TicketMessage, KnowledgeArticle, ApiKey,
+    Base, Agent, Player, User, Ticket, TicketMessage, KnowledgeArticle, ApiKey,
     TicketPriority, TicketStatus, TicketCategory,
 )
 from translation_service import (
@@ -21,6 +21,11 @@ from translation_service import (
     get_language_name, get_language_flag, LANGUAGE_MAP,
 )
 import facebook_news
+from auth import (
+    hash_password, verify_password, create_access_token, decode_token,
+    get_current_user, require_super_admin, get_user_info,
+)
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Game CS Manager", version="1.0.0")
 
@@ -31,6 +36,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Auth Middleware ────────────────────────────────────────────────
+# Protect all /api/ routes except auth, external, and public endpoints
+
+
+@app.middleware("http")
+async def auth_middleware(request, call_next):
+    path = request.url.path
+    # Public endpoints: allow without auth
+    public_prefixes = (
+        "/api/auth/", "/api/external/",
+        "/api/languages", "/api/translate", "/api/chat/token/",
+    )
+    if path.startswith("/api/") and not path.startswith(public_prefixes):
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return JSONResponse(status_code=401, content={"detail": "请先登录"})
+        try:
+            token = auth.replace("Bearer ", "")
+            decode_token(token)  # Will raise on invalid
+        except HTTPException as e:
+            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+        except Exception:
+            return JSONResponse(status_code=401, content={"detail": "无效的令牌"})
+    return await call_next(request)
 
 # ─── Helper ───────────────────────────────────────────────────────────
 
@@ -146,12 +176,148 @@ def _generate_suggestion_sync(ticket, player_language):
     )
 
 
+# ─── Auth Routes ────────────────────────────────────────────────────
+
+
+@app.post("/api/auth/login")
+def login(data: dict, db: Session = Depends(get_db)):
+    """用户登录，返回 JWT 令牌"""
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="请输入用户名和密码")
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.password_hash):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="账户已被禁用")
+
+    token = create_access_token(user_id=user.id, role=user.role, username=user.username)
+    return {
+        "token": token,
+        "user": get_user_info(user),
+    }
+
+
+@app.get("/api/auth/me")
+def get_my_info(user: User = Depends(get_current_user)):
+    """获取当前登录用户信息"""
+    return get_user_info(user)
+
+
+# ─── User Management (super_admin only) ─────────────────────────────
+
+
+@app.get("/api/admin/users")
+def list_users(user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """列出所有系统账户（超级管理员专用）"""
+    users = db.query(User).all()
+    return {"users": [get_user_info(u) for u in users]}
+
+
+@app.post("/api/admin/users")
+def create_user(data: dict, user: User = Depends(require_super_admin), db: Session = Depends(get_db)):
+    """创建新账户（超级管理员专用）"""
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    display_name = data.get("display_name", username)
+    role = data.get("role", "agent")
+
+    if not username or len(username) < 3:
+        raise HTTPException(status_code=400, detail="用户名至少3个字符")
+    if not password or len(password) < 6:
+        raise HTTPException(status_code=400, detail="密码至少6个字符")
+    if role not in ("agent", "super_admin"):
+        raise HTTPException(status_code=400, detail="角色无效")
+
+    existing = db.query(User).filter(User.username == username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+
+    new_user = User(
+        username=username,
+        password_hash=hash_password(password),
+        display_name=display_name,
+        role=role,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"status": "ok", "message": "账户创建成功", "user": get_user_info(new_user)}
+
+
+@app.put("/api/admin/users/{user_id}")
+def update_user(
+    user_id: int, data: dict,
+    user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """修改账户信息（超级管理员专用）"""
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if "display_name" in data:
+        target.display_name = data["display_name"]
+    if "password" in data and data["password"]:
+        target.password_hash = hash_password(data["password"])
+    if "role" in data:
+        if data["role"] not in ("agent", "super_admin"):
+            raise HTTPException(status_code=400, detail="角色无效")
+        target.role = data["role"]
+    if "is_active" in data:
+        target.is_active = data["is_active"]
+
+    db.commit()
+    db.refresh(target)
+    return {"status": "ok", "message": "账户已更新", "user": get_user_info(target)}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def delete_user(
+    user_id: int,
+    user: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+):
+    """删除账户（超级管理员专用，不能删除自己）"""
+    if user.id == user_id:
+        raise HTTPException(status_code=400, detail="不能删除自己的账户")
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    db.delete(target)
+    db.commit()
+    return {"status": "ok", "message": f"账户 '{target.username}' 已删除"}
+
+
 # ─── Seed Data ────────────────────────────────────────────────────────
+
+def _seed_users(db):
+    """独立种子用户，不依赖其他数据是否已存在"""
+    from auth import hash_password
+    if db.query(User).count() > 0:
+        return
+    users = [
+        User(username="admin", password_hash=hash_password("admin123"), display_name="超级管理员", role="super_admin"),
+        User(username="zhangsan", password_hash=hash_password("123456"), display_name="张三", role="agent"),
+        User(username="lisi", password_hash=hash_password("123456"), display_name="李四", role="agent"),
+        User(username="wangwu", password_hash=hash_password("123456"), display_name="王五", role="agent"),
+        User(username="zhaoliu", password_hash=hash_password("123456"), display_name="赵六", role="agent"),
+    ]
+    db.add_all(users)
+    db.commit()
+    print("[Seed] 已创建 5 个系统账户")
+
 
 def seed_data():
     db = SessionLocal()
     try:
         if db.query(Agent).count() > 0:
+            _seed_users(db)
             return
 
         agents = [
@@ -162,6 +328,8 @@ def seed_data():
         ]
         db.add_all(agents)
         db.flush()
+
+        _seed_users(db)
 
         players = [
             Player(player_id="10001", nickname="剑圣小白", server="S1", level=85, vip_level=8, total_recharge=5280.0, status="active", language="zh-CN"),

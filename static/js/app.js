@@ -29,35 +29,122 @@ function switchView(view) {
     else if (view === 'team') loadTeam();
 }
 
-// ─── API Helper ───
+// ─── Navigation ───
+
+// ─── Auth ───
+let currentUser = null;
+
+function getToken() { return localStorage.getItem('gcs_token'); }
+function setToken(t) { localStorage.setItem('gcs_token', t); }
+function clearToken() { localStorage.removeItem('gcs_token'); currentUser = null; }
 
 async function apiGet(url) {
-    const r = await fetch(API + url);
+    const h = {'Content-Type': 'application/json'};
+    const t = getToken(); if (t) h['Authorization'] = 'Bearer ' + t;
+    const r = await fetch(API + url, {headers: h});
+    if (r.status === 401) { clearToken(); showLogin(); throw new Error('请先登录'); }
     if (!r.ok) throw new Error(await r.text());
     return r.json();
 }
 
 async function apiPost(url, data) {
-    const r = await fetch(API + url, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data),
-    });
+    const h = {'Content-Type': 'application/json'};
+    const t = getToken(); if (t) h['Authorization'] = 'Bearer ' + t;
+    const r = await fetch(API + url, {method: 'POST', headers: h, body: JSON.stringify(data)});
+    if (r.status === 401) { clearToken(); showLogin(); throw new Error('请先登录'); }
     if (!r.ok) throw new Error(await r.text());
     return r.json();
 }
 
 async function apiPut(url, data) {
-    const r = await fetch(API + url, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data),
-    });
+    const h = {'Content-Type': 'application/json'};
+    const t = getToken(); if (t) h['Authorization'] = 'Bearer ' + t;
+    const r = await fetch(API + url, {method: 'PUT', headers: h, body: JSON.stringify(data)});
+    if (r.status === 401) { clearToken(); showLogin(); throw new Error('请先登录'); }
     if (!r.ok) throw new Error(await r.text());
     return r.json();
 }
 
-// ─── Helpers ───
+async function apiDelete(url) {
+    const h = {};
+    const t = getToken(); if (t) h['Authorization'] = 'Bearer ' + t;
+    const r = await fetch(API + url, {method: 'DELETE', headers: h});
+    if (r.status === 401) { clearToken(); showLogin(); throw new Error('请先登录'); }
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+}
+
+function showLogin() {
+    document.getElementById('login-overlay').classList.remove('hidden');
+    document.getElementById('login-error').textContent = '';
+}
+
+async function doLogin() {
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errEl = document.getElementById('login-error');
+    if (!username || !password) { errEl.textContent = '请输入用户名和密码'; return; }
+    errEl.textContent = '登录中...';
+    try {
+        const r = await fetch(API + '/api/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, password}),
+        });
+        const data = await r.json();
+        if (!r.ok) { errEl.textContent = data.detail || '登录失败'; return; }
+        setToken(data.token);
+        currentUser = data.user;
+        document.getElementById('login-overlay').classList.add('hidden');
+        document.getElementById('login-password').value = '';
+        onAuthSuccess();
+        loadDashboard();
+    } catch (e) {
+        errEl.textContent = '网络错误: ' + e.message;
+    }
+}
+
+function doLogout() {
+    if (!confirm('确认退出登录？')) return;
+    clearToken();
+    showLogin();
+}
+
+function onAuthSuccess() {
+    // Show/hide super_admin nav items
+    const navUsers = document.getElementById('nav-users');
+    if (navUsers) navUsers.style.display = currentUser && currentUser.role === 'super_admin' ? '' : 'none';
+    // Add logout button to topbar if not exists
+    if (!document.getElementById('logout-btn')) {
+        const right = document.querySelector('.topbar-right');
+        if (right) {
+            const btn = document.createElement('button');
+            btn.id = 'logout-btn';
+            btn.className = 'btn btn-sm';
+            btn.style.cssText = 'border-color:var(--accent-red);color:var(--accent-red);margin-left:8px';
+            btn.textContent = '🚪 ' + (currentUser ? currentUser.display_name : '');
+            btn.onclick = doLogout;
+            right.appendChild(btn);
+        }
+    } else {
+        document.getElementById('logout-btn').textContent = '🚪 ' + (currentUser ? currentUser.display_name : '');
+    }
+}
+
+async function initAuth() {
+    const token = getToken();
+    if (!token) { showLogin(); return; }
+    try {
+        const user = await apiGet('/api/auth/me');
+        currentUser = user;
+        document.getElementById('login-overlay').classList.add('hidden');
+        onAuthSuccess();
+    } catch (e) {
+        // Token invalid or expired
+        clearToken();
+        showLogin();
+    }
+}
 
 function statusTag(s) {
     const map = {
@@ -851,6 +938,7 @@ function switchView(view) {
         dashboard: '📊 工作台', tickets: '🎫 工单管理', players: '👥 玩家查询',
         knowledge: '📚 知识库', analytics: '📈 数据分析', team: '👨‍👩‍👧‍👦 团队管理',
         livechat: '💬 实时聊天', facebook: '📰 Facebook热点',
+        users: '👥 用户管理',
     };
     document.getElementById('view-title').textContent = titles[view] || view;
 
@@ -862,6 +950,7 @@ function switchView(view) {
     else if (view === 'team') loadTeam();
     else if (view === 'livechat') initLiveChat();
     else if (view === 'facebook') initFbNews();
+    else if (view === 'users') loadUsers();
 }
 
 async function initLiveChat() {
@@ -1378,3 +1467,95 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// ═══ USER MANAGEMENT ═══════════════════════════════════════════════
+
+async function loadUsers() {
+    const tbody = document.querySelector('#users-table tbody');
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted)">加载中...</td></tr>';
+    try {
+        const data = await apiGet('/api/admin/users');
+        if (!data.users || data.users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted)">暂无用户</td></tr>';
+            return;
+        }
+        let html = '';
+        for (const u of data.users) {
+            const isSelf = currentUser && currentUser.id === u.id;
+            const roleBadge = u.role === 'super_admin'
+                ? '<span class="tag tag-urgent">超级管理员</span>'
+                : '<span class="tag tag-medium">客服人员</span>';
+            const statusBadge = u.is_active
+                ? '<span style="color:var(--accent-green)">● 启用</span>'
+                : '<span style="color:var(--accent-red)">● 禁用</span>';
+            const delBtn = isSelf
+                ? '<span style="color:var(--text-muted);font-size:12px">当前账户</span>'
+                : `<button class="btn btn-sm" style="border-color:var(--accent-red);color:var(--accent-red)" onclick="deleteUser(${u.id},'${u.username}')">删除</button>`;
+            html += `<tr>
+                <td>${u.id}</td>
+                <td><strong>${escapeHtml(u.username)}</strong></td>
+                <td>${escapeHtml(u.display_name)}</td>
+                <td>${roleBadge}</td>
+                <td>${statusBadge}</td>
+                <td>${u.created_at ? new Date(u.created_at).toLocaleDateString('zh-CN') : '-'}</td>
+                <td style="display:flex;gap:6px">${delBtn}</td>
+            </tr>`;
+        }
+        tbody.innerHTML = html;
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--accent-red)">加载失败: ' + e.message + '</td></tr>';
+    }
+}
+
+function showAddUserForm() {
+    document.getElementById('add-user-modal').style.display = 'flex';
+    document.getElementById('new-user-username').value = '';
+    document.getElementById('new-user-display').value = '';
+    document.getElementById('new-user-password').value = '';
+    document.getElementById('new-user-role').value = 'agent';
+}
+
+function closeAddUserModal() {
+    document.getElementById('add-user-modal').style.display = 'none';
+}
+
+async function submitNewUser() {
+    const username = document.getElementById('new-user-username').value.trim();
+    const display_name = document.getElementById('new-user-display').value.trim() || username;
+    const password = document.getElementById('new-user-password').value;
+    const role = document.getElementById('new-user-role').value;
+
+    if (username.length < 3) { showToast('用户名至少3个字符', 'error'); return; }
+    if (password.length < 6) { showToast('密码至少6个字符', 'error'); return; }
+
+    try {
+        const data = await apiPost('/api/admin/users', {username, display_name, password, role});
+        showToast('✅ ' + data.message, 'success');
+        closeAddUserModal();
+        loadUsers();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+    }
+}
+
+async function deleteUser(id, username) {
+    if (!confirm(`确认删除账户 "${username}"？此操作不可撤销！`)) return;
+    try {
+        const data = await apiDelete('/api/admin/users/' + id);
+        showToast('✅ ' + data.message, 'success');
+        loadUsers();
+    } catch (e) {
+        let msg = e.message;
+        try { const j = JSON.parse(e.message); msg = j.detail || msg; } catch(_){}
+        showToast('❌ ' + msg, 'error');
+    }
+}
+
+// ═══ INIT ══════════════════════════════════════════════════════════
+
+// Override window.onload to add auth check
+window.addEventListener('DOMContentLoaded', () => {
+    initAuth();
+});

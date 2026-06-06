@@ -44,6 +44,19 @@ class Agent(Base):
     tickets = relationship("Ticket", back_populates="assigned_agent", foreign_keys="Ticket.assigned_to")
 
 
+class User(Base):
+    """系统登录账户"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    password_hash = Column(String(256), nullable=False)
+    display_name = Column(String(100), nullable=False)
+    role = Column(String(20), default="agent")  # super_admin, agent
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class Player(Base):
     __tablename__ = "players"
 
