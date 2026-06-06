@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+game_cs.db
+*.db
+.DS_Store

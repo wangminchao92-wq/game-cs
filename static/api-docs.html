@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔌 开放API - 游戏客服系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .docs-container { max-width: 900px; margin: 0 auto; padding: 20px 0; }
+        .docs-container h1 { font-size: 28px; margin-bottom: 8px; }
+        .docs-container .subtitle { color: var(--text-secondary); margin-bottom: 32px; }
+        
+        .doc-section { margin-bottom: 40px; }
+        .doc-section h2 { 
+            font-size: 20px; margin-bottom: 16px; 
+            padding-bottom: 8px; border-bottom: 1px solid var(--border);
+        }
+        .doc-section h3 { font-size: 16px; margin: 16px 0 8px; color: var(--accent-blue); }
+        .doc-section p { color: var(--text-secondary); line-height: 1.7; margin-bottom: 12px; }
+        
+        .endpoint-card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: var(--radius); margin-bottom: 16px; overflow: hidden;
+        }
+        .endpoint-card .endpoint-header {
+            padding: 14px 16px; display: flex; align-items: center; gap: 12px;
+            border-bottom: 1px solid var(--border); cursor: pointer;
+        }
+        .endpoint-card .endpoint-header:hover { background: var(--bg-hover); }
+        .endpoint-card .method {
+            padding: 3px 10px; border-radius: 4px; font-size: 12px;
+            font-weight: 700; text-transform: uppercase; min-width: 55px; text-align: center;
+        }
+        .method-get { background: rgba(88,166,255,0.15); color: var(--accent-blue); }
+        .method-post { background: rgba(63,185,80,0.15); color: var(--accent-green); }
+        .method-put { background: rgba(210,153,34,0.15); color: var(--accent-orange); }
+        .method-delete { background: rgba(248,81,73,0.15); color: var(--accent-red); }
+        .method-ws { background: rgba(188,140,255,0.15); color: var(--accent-purple); }
+        
+        .endpoint-card .path { font-family: 'SF Mono', Monaco, monospace; font-size: 13px; flex: 1; }
+        .endpoint-card .desc { font-size: 12px; color: var(--text-secondary); }
+        .endpoint-card .endpoint-body { padding: 16px; display: none; }
+        .endpoint-card.open .endpoint-body { display: block; }
+        
+        .param-table { width: 100%; font-size: 13px; margin-bottom: 12px; }
+        .param-table th { text-align: left; padding: 6px 10px; color: var(--text-secondary); border-bottom: 1px solid var(--border); font-weight: 500; }
+        .param-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+        .param-table .required { color: var(--accent-red); font-size: 11px; }
+        .param-table .optional { color: var(--text-muted); font-size: 11px; }
+        
+        pre.code-block {
+            background: #0d1117; border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 14px 16px;
+            font-size: 12px; line-height: 1.6; overflow-x: auto;
+            margin-bottom: 12px; font-family: 'SF Mono', Monaco, monospace;
+        }
+        pre.code-block .comment { color: #8b949e; }
+        pre.code-block .keyword { color: #ff7b72; }
+        pre.code-block .string { color: #a5d6ff; }
+        pre.code-block .number { color: #79c0ff; }
+        pre.code-block .function { color: #d2a8ff; }
+        
+        .tab-bar { display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid var(--border); }
+        .tab-btn {
+            padding: 8px 16px; font-size: 12px; cursor: pointer;
+            background: transparent; border: none; color: var(--text-secondary);
+            border-bottom: 2px solid transparent; transition: all 0.2s;
+        }
+        .tab-btn:hover { color: var(--text-primary); }
+        .tab-btn.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .info-box {
+            background: rgba(88,166,255,0.08);
+            border: 1px solid rgba(88,166,255,0.2);
+            border-radius: var(--radius-sm); padding: 12px 16px;
+            font-size: 13px; margin-bottom: 16px;
+        }
+        .info-box.warning { background: rgba(210,153,34,0.08); border-color: rgba(210,153,34,0.2); }
+        .info-box.success { background: rgba(63,185,80,0.08); border-color: rgba(63,185,80,0.2); }
+        .info-box.success strong { color: var(--accent-green); }
+        
+        .widget-preview {
+            background: var(--bg-primary); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+            text-align: center; min-height: 100px;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--text-muted); font-size: 14px;
+        }
+        .widget-preview .placeholder-icon { font-size: 40px; margin-bottom: 8px; }
+        
+        .sidebar-info {
+            max-width: 220px; position: sticky; top: 20px;
+        }
+        .sidebar-info .nav-item {
+            padding: 8px 12px; font-size: 13px; cursor: pointer;
+            border-radius: var(--radius-sm); transition: all 0.2s;
+        }
+        .sidebar-info .nav-item:hover { background: var(--bg-hover); }
+        
+        .back-link { 
+            display: inline-flex; align-items: center; gap: 6px;
+            color: var(--accent-blue); text-decoration: none;
+            font-size: 14px; margin-bottom: 20px;
+        }
+        .back-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🎮</span>
+                <span class="logo-text">客服中心</span>
+            </div>
+            <div class="company-badge">南京云霞飞信息技术有限公司</div>
+            <nav class="nav-menu">
+                <div class="nav-item" onclick="location.href='/'">
+                    <span class="nav-icon">📊</span><span>返回工作台</span>
+                </div>
+                <div class="nav-item active">
+                    <span class="nav-icon">🔌</span><span>开放API</span>
+                </div>
+                <div class="nav-item" onclick="document.getElementById('section-apikeys').scrollIntoView({behavior:'smooth'})">
+                    <span class="nav-icon">🔑</span><span>API Key 管理</span>
+                </div>
+                <div class="nav-item" onclick="document.getElementById('section-rest').scrollIntoView({behavior:'smooth'})">
+                    <span class="nav-icon">📡</span><span>REST API</span>
+                </div>
+                <div class="nav-item" onclick="document.getElementById('section-websocket').scrollIntoView({behavior:'smooth'})">
+                    <span class="nav-icon">💬</span><span>WebSocket 聊天</span>
+                </div>
+                <div class="nav-item" onclick="document.getElementById('section-widget').scrollIntoView({behavior:'smooth'})">
+                    <span class="nav-icon">🔌</span><span>嵌入 Widget</span>
+                </div>
+            </nav>
+            <div class="sidebar-footer">v2.0.0 · 开放API</div>
+        </aside>
+        
+        <main class="main-content">
+            <div class="docs-container">
+                
+                <h1>🔌 开放 API 文档</h1>
+                <p class="subtitle">第三方网站可以通过此 API 接入游戏客服系统，实现工单提交、实时聊天等功能。</div>
+                
+                <!-- 快速开始 -->
+                <div class="doc-section" id="section-quickstart">
+                    <h2>⚡ 快速开始</h2>
+                    <div class="info-box success">
+                        <strong>📋 接入步骤：</strong><br>
+                        1. 在下方 <a href="#section-apikeys" style="color:var(--accent-blue)">API Key 管理</a> 中创建一个 API Key<br>
+                        2. 在请求 Header 中带上 <code>X-API-Key</code><br>
+                        3. 调用 REST API 创建工单 / 查询状态<br>
+                        4. 或使用 WebSocket 实现实时聊天<br>
+                        5. 或直接嵌入聊天 Widget（一行代码）
+                    </div>
+                </div>
+                
+                <!-- API Key 管理 -->
+                <div class="doc-section" id="section-apikeys">
+                    <h2>🔑 API Key 管理</h2>
+                    <p>API Key 用于标识第三方接入方，所有外部 API 请求都需要在 Header 中携带。</p>
+                    
+                    <div id="apikey-admin-area">
+                        <div style="display:flex;gap:12px;margin-bottom:16px;align-items:end">
+                            <div class="form-group" style="flex:1;margin-bottom:0">
+                                <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block">接入方名称</label>
+                                <input type="text" id="new-apikey-name" style="width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px;outline:none" placeholder="例如：我的游戏官网">
+                            </div>
+                            <div class="form-group" style="flex:1;margin-bottom:0">
+                                <label style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;display:block">网站地址</label>
+                                <input type="text" id="new-apikey-url" style="width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text-primary);font-size:13px;outline:none" placeholder="https://example.com">
+                            </div>
+                            <button class="btn btn-primary" onclick="createApiKey()">➕ 创建</button>
+                        </div>
+                        <div id="apikey-list"></div>
+                    </div>
+                </div>
+                
+                <!-- REST API -->
+                <div class="doc-section" id="section-rest">
+                    <h2>📡 REST API</h2>
+                    <p>所有 REST API 基础路径：<code>https://cs.example.com/api/external/</code></p>
+                    <div class="info-box">
+                        <strong>🔐 认证方式：</strong> 所有请求需要在 HTTP Header 中携带 <code>X-API-Key: YOUR_API_KEY</code>
+                    </div>
+                    
+                    <!-- Create Ticket -->
+                    <div class="endpoint-card open">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="method method-post">POST</span>
+                            <span class="path">/api/external/tickets</span>
+                            <span class="desc">创建工单</span>
+                        </div>
+                        <div class="endpoint-body">
+                            <p>创建新的客服工单。如果玩家 ID 不存在，会自动创建玩家。</p>
+                            <h3>请求参数 (JSON Body)</h3>
+                            <table class="param-table">
+                                <tr><th>参数</th><th>类型</th><th>说明</th></tr>
+                                <tr><td>player_id <span class="required">必填</span></td><td>string</td><td>玩家唯一标识</td></tr>
+                                <tr><td>player_name <span class="optional">可选</span></td><td>string</td><td>玩家昵称（默认"未知玩家"）</td></tr>
+                                <tr><td>title <span class="required">必填</span></td><td>string</td><td>工单标题</td></tr>
+                                <tr><td>description <span class="optional">可选</span></td><td>string</td><td>问题描述</td></tr>
+                                <tr><td>category <span class="optional">可选</span></td><td>string</td><td>分类: payment/account/gameplay/bug/report/other</td></tr>
+                                <tr><td>priority <span class="optional">可选</span></td><td>string</td><td>优先级: low/medium/high/urgent</td></tr>
+                                <tr><td>language <span class="optional">可选</span></td><td>string</td><td>玩家语言: zh-CN/pt-BR/en/es/ja/ko 等</td></tr>
+                                <tr><td>server <span class="optional">可选</span></td><td>string</td><td>游戏服务器（默认"S1"）</td></tr>
+                            </table>
+                            
+                            <div class="tab-bar">
+                                <button class="tab-btn active" onclick="switchTab(this,'curl1')">cURL</button>
+                                <button class="tab-btn" onclick="switchTab(this,'python1')">Python</button>
+                                <button class="tab-btn" onclick="switchTab(this,'js1')">JavaScript</button>
+                            </div>
+                            
+                            <div class="tab-content active" id="tab-curl1">
+                                <pre class="code-block">curl -X POST https://cs.example.com/api/external/tickets \<br>  -H "Content-Type: application/json" \<br>  -H "X-API-Key: YOUR_API_KEY" \<br>  -d '{<br>    "player_id": "USER_10001",<br>    "player_name": "JoãoSilva",<br>    "title": "Não recebi meus itens",<br>    "description": "Comprei 500 moedas mas não recebi.",<br>    "category": "payment",<br>    "priority": "urgent",<br>    "language": "pt-BR",<br>    "server": "S3"<br>  }'</pre>
+                            </div>
+                            <div class="tab-content" id="tab-python1">
+                                <pre class="code-block"><span class="keyword">import</span> requests<br><br>resp = requests.post(<br>    <span class="string">"https://cs.example.com/api/external/tickets"</span>,<br>    headers={<span class="string">"X-API-Key"</span>: <span class="string">"YOUR_API_KEY"</span>},<br>    json={<br>        <span class="string">"player_id"</span>: <span class="string">"USER_10001"</span>,<br>        <span class="string">"player_name"</span>: <span class="string">"JoãoSilva"</span>,<br>        <span class="string">"title"</span>: <span class="string">"Não recebi meus itens"</span>,<br>        <span class="string">"language"</span>: <span class="string">"pt-BR"</span>,<br>    }<br>)<br>data = resp.json()<br><span class="keyword">print</span>(data[<span class="string">"ticket_id"</span>])  <span class="comment"># → "CS-20260604-XXXX"</span></pre>
+                            </div>
+                            <div class="tab-content" id="tab-js1">
+                                <pre class="code-block"><span class="keyword">const</span> resp = <span class="keyword">await</span> fetch(<span class="string">"https://cs.example.com/api/external/tickets"</span>, {<br>    method: <span class="string">"POST"</span>,<br>    headers: {<br>        <span class="string">"Content-Type"</span>: <span class="string">"application/json"</span>,<br>        <span class="string">"X-API-Key"</span>: <span class="string">"YOUR_API_KEY"</span>,<br>    },<br>    body: JSON.stringify({<br>        player_id: <span class="string">"USER_10001"</span>,<br>        player_name: <span class="string">"JoãoSilva"</span>,<br>        title: <span class="string">"Não recebi meus itens"</span>,<br>        language: <span class="string">"pt-BR"</span>,<br>    })<br>});<br><span class="keyword">const</span> data = <span class="keyword">await</span> resp.json();<br><span class="keyword">console</span>.log(data.ticket_id);</pre>
+                            </div>
+                            
+                            <h3>响应示例</h3>
+                            <pre class="code-block">{<br>  <span class="string">"ticket_id"</span>: <span class="string">"CS-20260604-A1B2"</span>,<br>  <span class="string">"status"</span>: <span class="string">"open"</span>,<br>  <span class="string">"created_at"</span>: <span class="string">"2026-06-04T08:30:00"</span><br>}</pre>
+                        </div>
+                    </div>
+                    
+                    <!-- Get Ticket -->
+                    <div class="endpoint-card">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="method method-get">GET</span>
+                            <span class="path">/api/external/tickets/{ticket_id}</span>
+                            <span class="desc">查询工单详情</span>
+                        </div>
+                        <div class="endpoint-body">
+                            <p>查询工单的详细信息，包括所有对话记录。</p>
+                            <pre class="code-block">curl https://cs.example.com/api/external/tickets/CS-20260604-A1B2 \<br>  -H "X-API-Key: YOUR_API_KEY"</pre>
+                            <pre class="code-block">{<br>  <span class="string">"ticket_id"</span>: <span class="string">"CS-20260604-A1B2"</span>,<br>  <span class="string">"title"</span>: <span class="string">"Não recebi meus itens"</span>,<br>  <span class="string">"status"</span>: <span class="string">"in_progress"</span>,<br>  <span class="string">"messages"</span>: [{<br>    <span class="string">"sender_type"</span>: <span class="string">"player"</span>,<br>    <span class="string">"content"</span>: <span class="string">"Comprei 500 moedas..."</span><br>  }]<br>}</pre>
+                        </div>
+                    </div>
+                    
+                    <!-- Post Message -->
+                    <div class="endpoint-card">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="method method-post">POST</span>
+                            <span class="path">/api/external/tickets/{ticket_id}/messages</span>
+                            <span class="desc">发送消息</span>
+                        </div>
+                        <div class="endpoint-body">
+                            <p>向工单发送一条新消息（来自玩家）。</p>
+                            <pre class="code-block">curl -X POST https://cs.example.com/api/external/tickets/CS-20260604-A1B2/messages \<br>  -H "Content-Type: application/json" \<br>  -H "X-API-Key: YOUR_API_KEY" \<br>  -d '{"content": "Ainda não recebi, quanto tempo mais?", "sender_name": "JoãoSilva"}'</pre>
+                        </div>
+                    </div>
+                    
+                    <!-- Get Player -->
+                    <div class="endpoint-card">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="method method-get">GET</span>
+                            <span class="path">/api/external/players/{player_id}</span>
+                            <span class="desc">查询玩家信息</span>
+                        </div>
+                        <div class="endpoint-body">
+                            <pre class="code-block">curl https://cs.example.com/api/external/players/USER_10001 \<br>  -H "X-API-Key: YOUR_API_KEY"</pre>
+                            <pre class="code-block">{<br>  <span class="string">"player_id"</span>: <span class="string">"USER_10001"</span>,<br>  <span class="string">"nickname"</span>: <span class="string">"JoãoSilva"</span>,<br>  <span class="string">"server"</span>: <span class="string">"S3"</span>,<br>  <span class="string">"level"</span>: 12,<br>  <span class="string">"status"</span>: <span class="string">"active"</span><br>}</pre>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- WebSocket 实时聊天 -->
+                <div class="doc-section" id="section-websocket">
+                    <h2>💬 WebSocket 实时聊天</h2>
+                    <p>通过 WebSocket 实现玩家和客服之间的实时对话。</p>
+                    
+                    <div class="endpoint-card open">
+                        <div class="endpoint-header" onclick="toggleEndpoint(this)">
+                            <span class="method method-ws">WS</span>
+                            <span class="path">/ws/chat/{ticket_id}</span>
+                            <span class="desc">实时聊天连接</span>
+                        </div>
+                        <div class="endpoint-body">
+                            <h3>连接方式</h3>
+                            <pre class="code-block"><span class="comment">// 玩家连接（无需认证）</span><br><span class="keyword">const</span> ws = <span class="keyword">new</span> WebSocket(<span class="string">"wss://cs.example.com/ws/chat/CS-20260604-A1B2"</span>);<br><br><span class="comment">// 客服连接</span><br><span class="keyword">const</span> ws = <span class="keyword">new</span> WebSocket(<span class="string">"wss://cs.example.com/ws/chat/CS-20260604-A1B2?role=agent"</span>);</pre>
+                            
+                            <h3>消息格式</h3>
+                            <table class="param-table">
+                                <tr><th>方向</th><th>类型</th><th>字段</th></tr>
+                                <tr><td>服务端 → 客户端</td><td>connected</td><td>ticket_id, role, player_language</td></tr>
+                                <tr><td>服务端 → 客户端</td><td>message</td><td>id, sender_type, sender_name, content, translated_content, timestamp</td></tr>
+                                <tr><td>服务端 → 客户端</td><td>new_chat</td><td>ticket_id, title, sender, preview (仅发给客服)</td></tr>
+                                <tr><td>客户端 → 服务端</td><td>message</td><td>type:"message", content, sender_name</td></tr>
+                                <tr><td>客户端 → 服务端</td><td>ping</td><td>type:"ping"</td></tr>
+                            </table>
+                            
+                            <h3>JavaScript 示例</h3>
+                            <pre class="code-block"><span class="keyword">const</span> ws = <span class="keyword">new</span> WebSocket(<span class="string">"wss://cs.example.com/ws/chat/CS-20260604-A1B2"</span>);<br><br>ws.onopen = () => {<br>    <span class="keyword">console</span>.log(<span class="string">"已连接"</span>);<br>};<br><br>ws.onmessage = (event) => {<br>    <span class="keyword">const</span> data = JSON.parse(event.data);<br>    <span class="keyword">if</span> (data.type === <span class="string">"message"</span>) {<br>        <span class="keyword">console</span>.log(data.sender_name + <span class="string">": "</span> + data.content);<br>        <span class="keyword">if</span> (data.translated_content) {<br>            <span class="keyword">console</span>.log(<span class="string">"🌍 翻译: "</span> + data.translated_content);<br>        }<br>    }<br>};<br><br><span class="comment">// 发送消息</span><br>ws.send(JSON.stringify({<br>    type: <span class="string">"message"</span>,<br>    content: <span class="string">"Olá, preciso de ajuda!"</span>,<br>    sender_name: <span class="string">"JoãoSilva"</span><br>}));</pre>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 嵌入 Widget -->
+                <div class="doc-section" id="section-widget">
+                    <h2>🔌 嵌入聊天 Widget</h2>
+                    <p>最简单的接入方式 — 只需一行 HTML 代码即可在你的网站中嵌入完整的客服聊天组件。</p>
+                    
+                    <div class="info-box success">
+                        <strong>✅ 支持自动翻译！</strong> 设置 <code>data-language="pt-BR"</code>，玩家用葡萄牙语提问，客服用中文回复自动翻译。
+                    </div>
+                    
+                    <h3>基本用法</h3>
+                    <pre class="code-block"><span class="comment">&lt;!-- 在你的网站 &lt;/body&gt; 前添加 --&gt;</span><br>&lt;<span class="keyword">script</span> src=<span class="string">"https://cs.example.com/static/chat-widget.js"</span><br>    data-api-key=<span class="string">"YOUR_API_KEY"</span><br>    data-server=<span class="string">"https://cs.example.com"</span><br>    data-player-id=<span class="string">"USER_10001"</span><br>    data-player-name=<span class="string">"JoãoSilva"</span><br>    data-language=<span class="string">"pt-BR"</span><br>&gt;&lt;/<span class="keyword">script</span>&gt;</pre>
+                    
+                    <h3>配置参数</h3>
+                    <table class="param-table">
+                        <tr><th>参数</th><th>说明</th><th>示例</th></tr>
+                        <tr><td>data-api-key</td><td>API Key（必填）</td><td>"YOUR_API_KEY"</td></tr>
+                        <tr><td>data-server</td><td>客服系统地址（必填）</td><td>"https://cs.example.com"</td></tr>
+                        <tr><td>data-player-id</td><td>玩家唯一ID</td><td>"USER_10001"</td></tr>
+                        <tr><td>data-player-name</td><td>玩家昵称</td><td>"JoãoSilva"</td></tr>
+                        <tr><td>data-language</td><td>玩家语言</td><td>"pt-BR" / "zh-CN" / "en"</td></tr>
+                        <tr><td>data-mode</td><td>模式: "chat"(即聊天) / "ticket"(先填工单)</td><td>"chat"</td></tr>
+                    </table>
+                    
+                    <h3>Python (Flask/Django) 集成示例</h3>
+                    <pre class="code-block"><span class="comment"># 在渲染页面时传入玩家信息</span><br>html = <span class="string">f'''</span><br><span class="string">&lt;script src="https://cs.example.com/static/chat-widget.js"</span><br><span class="string">    data-api-key="{API_KEY}"</span><br><span class="string">    data-server="https://cs.example.com"</span><br><span class="string">    data-player-id="{player.user_id}"</span><br><span class="string">    data-player-name="{player.nickname}"</span><br><span class="string">    data-language="{player.language}"</span><br><span class="string">&gt;&lt;/script&gt;</span><br><span class="string">'''</span><br><span class="keyword">return</span> render_template(<span class="string">"game.html"</span>, widget_html=html)</pre>
+                </div>
+                
+                <!-- 错误码 -->
+                <div class="doc-section">
+                    <h2>📋 错误码说明</h2>
+                    <table class="param-table">
+                        <tr><th>HTTP 状态码</th><th>说明</th><th>处理方式</th></tr>
+                        <tr><td>200</td><td>请求成功</td><td>-</td></tr>
+                        <tr><td>400</td><td>请求参数错误</td><td>检查请求参数是否完整</td></tr>
+                        <tr><td>401</td><td>API Key 无效</td><td>检查 X-API-Key Header 是否正确</td></tr>
+                        <tr><td>404</td><td>资源不存在</td><td>检查工单ID/玩家ID是否正确</td></tr>
+                        <tr><td>429</td><td>请求过于频繁</td><td>降低请求频率（限制 60次/分钟）</td></tr>
+                        <tr><td>500</td><td>服务器内部错误</td><td>联系管理员</td></tr>
+                    </table>
+                </div>
+                
+            </div>
+        </main>
+    </div>
+    
+    <script>
+        // ─── Toggle Endpoint Details ────────────────────────────
+        function toggleEndpoint(header) {
+            header.parentElement.classList.toggle('open');
+        }
+        
+        // ─── Switch Code Tabs ───────────────────────────────────
+        function switchTab(btn, tabId) {
+            const parent = btn.closest('.endpoint-card') || btn.closest('.doc-section');
+            const tabs = parent.querySelectorAll('.tab-btn');
+            const contents = parent.querySelectorAll('.tab-content');
+            tabs.forEach(t => t.classList.remove('active'));
+            contents.forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            parent.querySelector('#tab-' + tabId).classList.add('active');
+        }
+        
+        // ─── API Key Management ─────────────────────────────────
+        async function loadApiKeys() {
+            try {
+                const resp = await fetch('/api/admin/api-keys');
+                if (!resp.ok) throw new Error('Unauthorized');
+                const data = await resp.json();
+                const list = document.getElementById('apikey-list');
+                
+                if (data.api_keys.length === 0) {
+                    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:14px">暂无 API Key，请创建一个</div>';
+                    return;
+                }
+                
+                list.innerHTML = '<table class="param-table"><thead><tr><th>名称</th><th>API Key</th><th>网站</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>' +
+                    data.api_keys.map(k => 
+                        `<tr>
+                            <td>${escapeHtml(k.name)}</td>
+                            <td><code style="font-size:11px;background:var(--bg-hover);padding:2px 6px;border-radius:4px">${k.key.substring(0, 8)}...${k.key.slice(-4)}</code>
+                                <button class="btn btn-sm" onclick="copyKey('${k.key}')" style="margin-left:4px">📋</button>
+                            </td>
+                            <td style="font-size:12px;color:var(--text-secondary)">${escapeHtml(k.website_url || '-')}</td>
+                            <td><span style="color:${k.is_active ? 'var(--accent-green)' : 'var(--accent-red)'}">${k.is_active ? '● 启用' : '● 停用'}</span></td>
+                            <td style="font-size:12px;color:var(--text-secondary)">${k.created_at ? new Date(k.created_at).toLocaleDateString('zh-CN') : '-'}</td>
+                            <td><button class="btn btn-sm" style="border-color:var(--accent-red);color:var(--accent-red)" onclick="deleteApiKey(${k.id})">删除</button></td>
+                        </tr>`
+                    ).join('') + '</tbody></table>';
+            } catch (e) {
+                document.getElementById('apikey-list').innerHTML = 
+                    '<div style="text-align:center;padding:20px;color:var(--accent-orange)">加载失败: ' + e.message + '</div>';
+            }
+        }
+        
+        async function createApiKey() {
+            const name = document.getElementById('new-apikey-name').value.trim();
+            const url = document.getElementById('new-apikey-url').value.trim();
+            if (!name) { alert('请输入接入方名称'); return; }
+            
+            try {
+                const resp = await fetch('/api/admin/api-keys', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, website_url: url}),
+                });
+                if (!resp.ok) throw new Error('创建失败');
+                const data = await resp.json();
+                alert('✅ API Key 创建成功！\n\nKey: ' + data.key + '\n\n请立即复制保存，关闭后将不再显示完整 Key。');
+                document.getElementById('new-apikey-name').value = '';
+                document.getElementById('new-apikey-url').value = '';
+                loadApiKeys();
+            } catch (e) {
+                alert('创建失败: ' + e.message);
+            }
+        }
+        
+        async function deleteApiKey(id) {
+            if (!confirm('确定要删除此 API Key 吗？')) return;
+            try {
+                await fetch('/api/admin/api-keys/' + id, {method: 'DELETE'});
+                loadApiKeys();
+            } catch (e) {
+                alert('删除失败: ' + e.message);
+            }
+        }
+        
+        function copyKey(key) {
+            navigator.clipboard.writeText(key).then(() => {
+                alert('✅ API Key 已复制');
+            }).catch(() => {
+                prompt('请手动复制:', key);
+            });
+        }
+        
+        function escapeHtml(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+        
+        // ─── Init ──────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', loadApiKeys);
+    </script>
+</body>
+</html>
